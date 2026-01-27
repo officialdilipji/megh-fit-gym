@@ -1,0 +1,8 @@
+
+{
+  "name": "Megh FIT GYM Club Management System",
+  "description": "A high-performance gym admission and member management app for Megh FIT GYM Club with integrated photo capture, unique ID generation, payment processing (UPI/Cash), and AI-powered fitness goal analysis.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
