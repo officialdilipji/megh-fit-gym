@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Member, MembershipTier, Gender, PaymentMethod, TierSettings, MemberStatus } from '../types';
 import CameraCapture from './CameraCapture';
@@ -86,21 +85,22 @@ const MemberForm: React.FC<MemberFormProps> = ({ onAdd, onCancel, tierSettings, 
 
     const initialStatus = isSelfRegistration ? MemberStatus.PENDING : MemberStatus.ACTIVE;
 
-    let insights = "";
+    let insights: string = "";
     if (initialStatus === MemberStatus.ACTIVE) {
-      insights = await getFitnessInsights({
+      const generatedInsights = await getFitnessInsights({
         name: formData.name,
-        age: parseInt(formData.age),
-        gender: formData.gender,
+        age: parseInt(formData.age) || 0,
+        gender: formData.gender as string,
         goals: formData.goals,
-        tier: formData.tier
+        tier: formData.tier as string
       });
+      insights = generatedInsights;
     }
     
     const newMember: Member = {
       id: `MEGH-${timestamp}`,
       name: formData.name,
-      age: parseInt(formData.age),
+      age: parseInt(formData.age) || 0,
       gender: formData.gender,
       phone: formData.phone,
       email: formData.email,
