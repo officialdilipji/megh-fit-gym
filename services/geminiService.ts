@@ -1,7 +1,8 @@
+
 import { GoogleGenAI } from "@google/genai";
 
-/* Initialize GoogleGenAI using process.env.API_KEY directly */
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+/* Initialize GoogleGenAI using process.env.API_KEY directly as mandated by guidelines */
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const getFitnessInsights = async (member: {
   name: string;
@@ -18,7 +19,7 @@ export const getFitnessInsights = async (member: {
       Focus on motivation, a key exercise relevant to their tier perks, and a nutrition tip.`,
     });
     
-    // Explicitly handle undefined to satisfy strict TS checks
+    // Explicitly handle undefined to satisfy strict TS checks, using the .text property
     const textOutput = response.text;
     if (!textOutput) {
       return "Welcome to the team! Push your limits and stay consistent.";

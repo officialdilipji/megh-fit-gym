@@ -1,224 +1,352 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Member, AppState, MembershipTier, MemberStatus, DEFAULT_TIER_CONFIG, TierSettings } from './types';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Member, AppState, MembershipTier, MemberStatus, DEFAULT_TIER_CONFIG, DEFAULT_PT_CONFIG, AttendanceLog, AdminConfig, TierSettings, PTSettings, DurationMonths } from './types';
 import MemberForm from './components/MemberForm';
 import MemberList from './components/MemberList';
 import MemberProfileView from './components/MemberProfileView';
-import { PlusIcon } from './components/Icons';
+import AdminLogin from './components/AdminLogin';
+import HomeView from './components/HomeView';
+import LandingView from './components/LandingView';
 import { getFitnessInsights } from './services/geminiService';
-import { syncMemberToSheet } from './services/googleSheetService';
+import { syncMemberToSheet, fetchMembersFromSheet, syncAttendanceToSheet, fetchAttendanceLogs, deleteMemberFromSheet } from './services/googleSheetService';
 
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>(() => {
     const savedMembers = localStorage.getItem('titan_gym_members');
+    const savedAttendance = localStorage.getItem('titan_gym_attendance');
     const savedSettings = localStorage.getItem('titan_gym_settings');
+    const savedPTSettings = localStorage.getItem('titan_gym_pt_settings');
+    const savedAdmin = localStorage.getItem('titan_gym_admin');
+    const isLoggedIn = sessionStorage.getItem('admin_logged_in') === 'true';
+    const isFrontDeskUnlocked = sessionStorage.getItem('front_desk_unlocked') === 'true';
     
+    const hash = window.location.hash;
+    let initialView: 'home' | 'admin' | 'client' | 'login' | 'landing' = 'landing';
+    
+    // Auto-navigate based on login and hash
+    if (hash === '#join') initialView = 'client';
+    else if (hash === '#admin') initialView = isLoggedIn ? 'admin' : 'login';
+    else if (isFrontDeskUnlocked) initialView = 'home';
+
     return {
       members: savedMembers ? JSON.parse(savedMembers) : [],
+      attendance: savedAttendance ? JSON.parse(savedAttendance) : [],
       isAddingMember: false,
       searchTerm: '',
       sortOrder: 'newest',
-      currentView: 'admin',
-      tierSettings: savedSettings ? JSON.parse(savedSettings) : DEFAULT_TIER_CONFIG
+      currentView: initialView,
+      isLoggedIn: isLoggedIn,
+      tierSettings: savedSettings ? JSON.parse(savedSettings) : DEFAULT_TIER_CONFIG,
+      ptSettings: savedPTSettings ? JSON.parse(savedPTSettings) : DEFAULT_PT_CONFIG,
+      adminConfig: savedAdmin ? JSON.parse(savedAdmin) : { username: 'admin', password: 'meghfit123', upiId: 'meghfit@upi' }
     };
   });
 
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
-  const [showJoinQR, setShowJoinQR] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [justSubmitted, setJustSubmitted] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [notification, setNotification] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+  const [memberToConfirmDelete, setMemberToConfirmDelete] = useState<Member | null>(null);
 
-  // Sync with LocalStorage
+  const [tempSettings, setTempSettings] = useState<{ 
+    upiId: string, 
+    prices: TierSettings, 
+    ptPrices: PTSettings 
+  }>({
+    upiId: state.adminConfig.upiId,
+    prices: state.tierSettings,
+    ptPrices: state.ptSettings
+  });
+
+  const syncLock = useRef<Map<string, number>>(new Map());
+
+  const getDeletedBlacklist = (): Map<string, number> => {
+    try {
+      const stored = localStorage.getItem('titan_gym_deleted_blacklist');
+      if (!stored) return new Map();
+      const parsed = JSON.parse(stored);
+      return new Map(Object.entries(parsed));
+    } catch {
+      return new Map();
+    }
+  };
+
+  const saveDeletedBlacklist = (map: Map<string, number>) => {
+    localStorage.setItem('titan_gym_deleted_blacklist', JSON.stringify(Object.fromEntries(map)));
+  };
+
   useEffect(() => {
     localStorage.setItem('titan_gym_members', JSON.stringify(state.members));
+    localStorage.setItem('titan_gym_attendance', JSON.stringify(state.attendance));
+    localStorage.setItem('titan_gym_admin', JSON.stringify(state.adminConfig));
     localStorage.setItem('titan_gym_settings', JSON.stringify(state.tierSettings));
-  }, [state.members, state.tierSettings]);
+    localStorage.setItem('titan_gym_pt_settings', JSON.stringify(state.ptSettings));
+  }, [state.members, state.attendance, state.adminConfig, state.tierSettings, state.ptSettings]);
 
-  // Unified Routing Handler
-  const handleNavigation = useCallback(() => {
-    const hash = window.location.hash;
-    
-    if (hash === '#join') {
-      setState(prev => ({ ...prev, currentView: 'client', isAddingMember: false }));
-      setSelectedMember(null);
-      setShowSettings(false);
-    } else {
-      setState(prev => ({ ...prev, currentView: 'admin' }));
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 4000);
+  };
+
+  const loadCloudData = useCallback(async () => {
+    if (isSyncing || state.isAddingMember) return;
+    setIsSyncing(true);
+    try {
+      const cloudMembers = await fetchMembersFromSheet();
+      const cloudAttendance = await fetchAttendanceLogs();
       
-      if (hash.startsWith('#profile/')) {
-        const id = hash.replace('#profile/', '');
-        const member = state.members.find(m => m.id === id);
-        if (member) {
-          setSelectedMember(member);
+      setState(prev => {
+        const now = Date.now();
+        const LOCK_DURATION = 20000; 
+        const DELETE_BLOCK_DURATION = 86400000; // Block for 24h after deletion to prevent re-sync
+        
+        const blacklist = getDeletedBlacklist();
+        let mergedMembers: Member[] = [];
+        
+        if (cloudMembers && cloudMembers.length > 0) {
+          cloudMembers.forEach(cm => {
+            const deleteTime = blacklist.get(cm.id);
+            if (deleteTime && (now - deleteTime < DELETE_BLOCK_DURATION)) return;
+
+            const lockTime = syncLock.current.get(cm.id);
+            if (lockTime && (now - lockTime < LOCK_DURATION)) {
+              const local = prev.members.find(m => m.id === cm.id);
+              if (local) mergedMembers.push(local);
+              else mergedMembers.push(cm);
+            } else {
+              mergedMembers.push(cm);
+            }
+          });
+          
+          prev.members.forEach(lm => {
+            if (!mergedMembers.find(mm => mm.id === lm.id)) {
+              const deleteTime = blacklist.get(lm.id);
+              if (!deleteTime || (now - deleteTime > DELETE_BLOCK_DURATION)) {
+                const lockTime = syncLock.current.get(lm.id);
+                if (lockTime && (now - lockTime < LOCK_DURATION)) {
+                  mergedMembers.push(lm);
+                }
+              }
+            }
+          });
         } else {
-          const localMembers = JSON.parse(localStorage.getItem('titan_gym_members') || '[]');
-          const localMember = localMembers.find((m: any) => m.id === id);
-          if (localMember) setSelectedMember(localMember);
+          mergedMembers = prev.members.filter(lm => {
+            const lockTime = syncLock.current.get(lm.id);
+            const deleteTime = blacklist.get(lm.id);
+            return lockTime && (now - lockTime < LOCK_DURATION) && !deleteTime;
+          });
         }
-      } else {
-        setSelectedMember(null);
-      }
+
+        let mergedAttendance = [...prev.attendance];
+        if (cloudAttendance && cloudAttendance.length > 0) {
+          cloudAttendance.forEach(ca => {
+            const idx = mergedAttendance.findIndex(a => a.memberId === ca.memberId && a.date === ca.date && a.checkIn === ca.checkIn);
+            if (idx >= 0) {
+              const localLog = mergedAttendance[idx];
+              if (!!ca.checkOut && !localLog.checkOut) mergedAttendance[idx] = ca;
+            } else {
+              mergedAttendance.push(ca);
+            }
+          });
+        }
+        return { ...prev, members: mergedMembers, attendance: mergedAttendance };
+      });
+    } catch (err: any) {
+      console.warn("Sync error:", err.message);
+    } finally {
+      setIsSyncing(false);
     }
-  }, [state.members]);
+  }, [isSyncing, state.isAddingMember]);
 
   useEffect(() => {
-    handleNavigation();
-    window.addEventListener('hashchange', handleNavigation);
-    return () => window.removeEventListener('hashchange', handleNavigation);
-  }, [handleNavigation]);
+    loadCloudData();
+    const interval = setInterval(loadCloudData, 45000);
+    return () => clearInterval(interval);
+  }, []);
 
-  const handleAddMember = async (newMember: Member) => {
+  const handleNavigate = (view: 'home' | 'admin' | 'client' | 'login' | 'landing') => {
+    if (view === 'admin' && !state.isLoggedIn) setState(prev => ({ ...prev, currentView: 'login' }));
+    else setState(prev => ({ ...prev, currentView: view }));
+  };
+
+  const handleUnlockFrontDesk = () => {
+    sessionStorage.setItem('front_desk_unlocked', 'true');
+    setState(prev => ({ ...prev, currentView: 'home' }));
+  };
+
+  const handleUpdateMember = async (updatedMember: Member) => {
+    syncLock.current.set(updatedMember.id, Date.now());
     setState(prev => ({
       ...prev,
-      members: [newMember, ...prev.members],
-      isAddingMember: false
+      members: prev.members.map(m => m.id === updatedMember.id ? updatedMember : m)
     }));
     
-    setIsSyncing(true);
-    await syncMemberToSheet(newMember);
-    setIsSyncing(false);
+    if (selectedMember && selectedMember.id === updatedMember.id) {
+      setSelectedMember(updatedMember);
+    }
 
-    if (state.currentView === 'client') {
-      setJustSubmitted(true);
+    try {
+      await syncMemberToSheet(updatedMember);
+    } catch (err) {
+      showToast("Sync pending.", "error");
     }
   };
 
   const handleApprove = async (member: Member) => {
-    if (!confirm(`Confirm activation for ${member.name}?`)) return;
-
     const now = new Date();
-    const duration = state.tierSettings[member.tier].durationMonths;
     const expiryDateObj = new Date(now);
-    expiryDateObj.setMonth(now.getMonth() + duration);
+    expiryDateObj.setMonth(now.getMonth() + member.membershipDuration);
 
-    const insights = await getFitnessInsights({
-      name: member.name,
-      age: member.age,
-      gender: member.gender,
-      goals: member.fitnessGoals,
-      tier: member.tier
-    });
-
-    const updatedMember: Member = { 
+    let activatedMember: Member = { 
       ...member, 
       status: MemberStatus.ACTIVE, 
       joinDate: now.toLocaleDateString(), 
       expiryDate: expiryDateObj.toLocaleDateString(),
-      expiryTimestamp: expiryDateObj.getTime(),
-      aiInsights: insights 
+      expiryTimestamp: expiryDateObj.getTime()
     };
 
-    setState(prev => ({
-      ...prev,
-      members: prev.members.map(m => m.id === member.id ? updatedMember : m)
-    }));
+    if (member.hasPersonalTraining && member.ptDuration) {
+      const ptExpiryObj = new Date(now);
+      ptExpiryObj.setMonth(now.getMonth() + member.ptDuration);
+      activatedMember.ptExpiryDate = ptExpiryObj.toLocaleDateString();
+      activatedMember.ptExpiryTimestamp = ptExpiryObj.getTime();
+    }
 
-    setIsSyncing(true);
-    await syncMemberToSheet(updatedMember);
-    setIsSyncing(false);
+    handleUpdateMember(activatedMember);
+    showToast(`${activatedMember.name} activated!`);
+    
+    getFitnessInsights({
+      name: member.name, age: member.age, gender: member.gender, goals: member.fitnessGoals, tier: member.tier
+    }).then(insights => {
+      handleUpdateMember({ ...activatedMember, aiInsights: insights });
+    });
   };
 
-  const handleDeleteMember = (id: string) => {
-    if (confirm('Are you sure you want to remove this member?')) {
-      setState(prev => ({
-        ...prev,
-        members: prev.members.filter(m => m.id !== id)
-      }));
+  const handleAddMember = async (newMember: Member) => {
+    syncLock.current.set(newMember.id, Date.now());
+    setState(prev => ({ ...prev, members: [newMember, ...prev.members], isAddingMember: false }));
+    setIsSyncing(true);
+    try {
+      await syncMemberToSheet(newMember);
+      showToast(`${newMember.name} added.`);
+    } catch (err) {
+      showToast(`Locally saved.`, 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+    if (state.currentView === 'client') setJustSubmitted(true);
+  };
+
+  const updateAttendance = async (log: AttendanceLog) => {
+    setState(prev => {
+      const idx = prev.attendance.findIndex(a => a.memberId === log.memberId && a.date === log.date && a.checkIn === log.checkIn);
+      const newLogs = [...prev.attendance];
+      if (idx >= 0) newLogs[idx] = log;
+      else newLogs.push(log);
+      return { ...prev, attendance: newLogs };
+    });
+    
+    if (log.checkOut) {
+      showToast("Logout Successful", "success");
+    }
+
+    syncAttendanceToSheet(log).catch(console.error);
+  };
+
+  const saveConfiguration = () => {
+    setState(prev => ({
+      ...prev,
+      adminConfig: { ...prev.adminConfig, upiId: tempSettings.upiId },
+      tierSettings: tempSettings.prices,
+      ptSettings: tempSettings.ptPrices
+    }));
+    showToast("Settings updated.");
+    setShowSettings(false);
+  };
+
+  const openSettings = () => {
+    setTempSettings({
+      upiId: state.adminConfig.upiId,
+      prices: JSON.parse(JSON.stringify(state.tierSettings)),
+      ptPrices: JSON.parse(JSON.stringify(state.ptSettings))
+    });
+    setShowSettings(true);
+  };
+
+  const confirmDeleteMember = async () => {
+    if (!memberToConfirmDelete) return;
+    const id = memberToConfirmDelete.id;
+    const blacklist = getDeletedBlacklist();
+    blacklist.set(id, Date.now());
+    saveDeletedBlacklist(blacklist);
+    setState(prev => ({ 
+      ...prev, 
+      members: prev.members.filter(m => m.id !== id) 
+    }));
+    if (selectedMember?.id === id) setSelectedMember(null);
+    setMemberToConfirmDelete(null);
+    showToast("Athlete profile and ID removed.", "success");
+    try {
+      await deleteMemberFromSheet(id);
+    } catch (err) {
+      console.warn("Cloud cleanup scheduled.");
     }
   };
 
-  const handlePriceUpdate = (tier: MembershipTier, newPrice: number) => {
-    setState(prev => ({
-      ...prev,
-      tierSettings: {
-        ...prev.tierSettings,
-        [tier]: {
-          ...prev.tierSettings[tier],
-          price: newPrice
-        }
-      }
-    }));
-  };
-
-  const toggleSort = () => {
-    setState(prev => ({
-      ...prev,
-      sortOrder: prev.sortOrder === 'newest' ? 'oldest' : 'newest'
-    }));
-  };
-
   const stats = {
-    total: state.members.filter(m => m.status === MemberStatus.ACTIVE).length,
-    pending: state.members.filter(m => m.status === MemberStatus.PENDING).length,
-    premium: state.members.filter(m => m.tier === MembershipTier.PREMIUM && m.status === MemberStatus.ACTIVE).length,
-    activeRevenue: state.members.reduce((acc, m) => m.status === MemberStatus.ACTIVE ? acc + m.amountPaid : acc, 0)
+    total: state.members.filter(m => String(m.status).toUpperCase() === MemberStatus.ACTIVE.toUpperCase()).length,
+    pending: state.members.filter(m => !m.status || String(m.status).toUpperCase() === MemberStatus.PENDING.toUpperCase()).length,
+    revenue: state.members.reduce((acc, m) => String(m.status).toUpperCase() === MemberStatus.ACTIVE.toUpperCase() ? acc + (Number(m.amountPaid) || 0) : acc, 0)
   };
 
-  const closeProfile = () => {
-    setSelectedMember(null);
-    window.location.hash = '';
-  };
+  // Rendering logic
+  if (state.currentView === 'landing') {
+    return <LandingView onUnlock={handleUnlockFrontDesk} />;
+  }
 
-  // Robust join link generation
-  const getJoinLink = () => {
-    const baseUrl = window.location.origin + window.location.pathname;
-    return `${baseUrl}#join`;
-  };
+  if (state.currentView === 'home') {
+    return (
+      <HomeView 
+        members={state.members} 
+        attendance={state.attendance} 
+        onUpdateAttendance={updateAttendance} 
+        onNavigate={handleNavigate}
+        adminConfig={state.adminConfig}
+      />
+    );
+  }
 
-  const joinLink = getJoinLink();
-  const joinQRUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(joinLink)}&color=f59e0b&bgcolor=0f172a&margin=20`;
-
-  const goToAdmin = () => {
-    window.location.hash = '';
-    setState(prev => ({ ...prev, currentView: 'admin', isAddingMember: false }));
-  };
+  if (state.currentView === 'login') {
+    return <AdminLogin onLogin={() => setState(prev => ({...prev, isLoggedIn: true, currentView: 'admin'}))} adminConfig={state.adminConfig} />;
+  }
 
   if (state.currentView === 'client') {
     return (
-      <div className="min-h-screen p-6 flex flex-col items-center bg-slate-950">
-        <div className="max-w-4xl w-full pt-8">
-           <header className="mb-12 text-center relative">
-             <div className="flex justify-center mb-8">
-               <button 
-                onClick={goToAdmin} 
-                className="px-10 py-4 bg-amber-500 text-slate-900 rounded-full font-black text-sm uppercase tracking-[0.2em] shadow-2xl hover:bg-amber-400 transition transform active:scale-95 flex items-center gap-3 border-4 border-slate-900"
-               >
-                 <span>←</span> BACK TO ADMIN
-               </button>
-             </div>
-             <h1 className="text-4xl font-black text-white tracking-tighter uppercase border-b-2 border-amber-500 inline-block pb-2 px-4">MEGH FIT CLUB</h1>
-             <p className="text-slate-400 font-bold uppercase tracking-[0.4em] text-[10px] mt-4">Self Registration Portal</p>
+      <div className="min-h-screen p-6 bg-slate-950 text-slate-200">
+        <div className="max-w-4xl mx-auto pt-8">
+           <header className="mb-12 flex items-center justify-between">
+             <button onClick={() => handleNavigate('landing')} className="text-amber-500 font-bold text-xs uppercase hover:underline">← Home</button>
+             <h1 className="text-2xl font-black text-white tracking-tighter uppercase border-b-2 border-amber-500 pb-1">JOIN THE CLUB</h1>
+             <div className="w-10"></div>
            </header>
-
            {justSubmitted ? (
-             <div className="bg-slate-900/50 border border-emerald-500/30 p-10 rounded-3xl text-center animate-in zoom-in duration-500 shadow-2xl">
+             <div className="bg-slate-900 border border-emerald-500/30 p-12 rounded-3xl text-center shadow-2xl animate-in zoom-in duration-500">
                <div className="w-20 h-20 bg-emerald-500 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-900">
-                 <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
                </div>
-               <h2 className="text-2xl font-black text-white mb-2">Registration Submitted!</h2>
-               <p className="text-slate-400 mb-8 max-w-sm mx-auto">Please proceed to the front desk and complete your payment to activate your membership.</p>
-               <div className="flex flex-col gap-3 max-w-xs mx-auto">
-                 <button 
-                  onClick={() => setJustSubmitted(false)}
-                  className="bg-amber-500 hover:bg-amber-400 text-slate-900 px-8 py-3 rounded-xl text-xs font-bold uppercase transition shadow-lg"
-                 >
-                   Register Another
-                 </button>
-                 <button 
-                  onClick={goToAdmin}
-                  className="bg-slate-800 hover:bg-slate-700 text-white px-8 py-3 rounded-xl text-xs font-bold uppercase transition border border-slate-700"
-                 >
-                   Return to Dashboard
-                 </button>
-               </div>
+               <h2 className="text-3xl font-black text-white mb-4 uppercase">Applied</h2>
+               <p className="text-slate-400 mb-10 max-w-sm mx-auto leading-relaxed">Application sent for approval. Visit front desk to finalize your membership.</p>
+               <button onClick={() => { setJustSubmitted(false); handleNavigate('landing'); }} className="text-xs font-black text-amber-500 uppercase tracking-widest hover:underline">Return Home</button>
              </div>
            ) : (
             <MemberForm 
               isSelfRegistration 
               onAdd={handleAddMember} 
-              onCancel={goToAdmin}
-              tierSettings={state.tierSettings}
+              onCancel={() => handleNavigate('landing')} 
+              tierSettings={state.tierSettings} 
+              ptSettings={state.ptSettings}
+              gymUpiId={state.adminConfig.upiId} 
             />
            )}
         </div>
@@ -228,194 +356,191 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen pb-20 bg-slate-950 text-slate-200">
+      {notification && (
+        <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[110] px-8 py-5 rounded-[2rem] border shadow-2xl animate-in slide-in-from-top duration-300 flex items-center gap-4 ${notification.type === 'success' ? 'bg-emerald-500 border-emerald-400 text-slate-950' : 'bg-red-500 border-red-400 text-white'}`}>
+           <p className="text-sm font-black uppercase tracking-tight">{notification.message}</p>
+        </div>
+      )}
+
+      {memberToConfirmDelete && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/90 backdrop-blur-md animate-in fade-in duration-300 p-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] p-8 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-300">
+             <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18m-2 0v14c0-1-1-2-2-2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2m-6 5v6m4-6v6"/></svg>
+             </div>
+             <h3 className="text-xl font-black text-white text-center uppercase tracking-tighter mb-2">Delete Athlete?</h3>
+             <p className="text-slate-500 text-xs text-center font-bold mb-8 uppercase leading-relaxed">This will permanently remove <span className="text-white font-black">{memberToConfirmDelete.name}</span> and their ID from all records.</p>
+             <div className="flex gap-4">
+                <button onClick={() => setMemberToConfirmDelete(null)} className="flex-1 py-4 bg-slate-800 text-slate-400 rounded-2xl font-black uppercase text-[10px] tracking-widest transition hover:bg-slate-700">Cancel</button>
+                <button onClick={confirmDeleteMember} className="flex-1 py-4 bg-red-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-red-400 transition shadow-lg shadow-red-500/20">Delete</button>
+             </div>
+          </div>
+        </div>
+      )}
+
       <header className="sticky top-0 z-30 bg-slate-900/80 backdrop-blur-lg border-b border-slate-800 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div>
-              <h1 className="text-xl font-black tracking-tighter text-white uppercase">MEGH FIT<span className="text-amber-500 ml-1">GYM CLUB</span></h1>
-              <div className="flex items-center gap-2">
-                <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Admin Portal</p>
-                {isSyncing && (
-                  <span className="flex h-2 w-2 relative" title="Syncing to Cloud...">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
           <div className="flex items-center gap-4">
-            <div className="relative hidden lg:block">
-              <input 
-                type="text"
-                placeholder="Search athletes..."
-                value={state.searchTerm}
-                onChange={e => setState(prev => ({ ...prev, searchTerm: e.target.value }))}
-                className="bg-slate-800 border border-slate-700 rounded-full px-5 py-2 text-sm focus:ring-2 focus:ring-amber-500 outline-none w-64 transition"
-              />
-            </div>
-            
-            <button
-              onClick={() => setShowJoinQR(true)}
-              className="bg-slate-800 hover:bg-slate-700 text-amber-500 border border-slate-700 px-4 py-2 rounded-full font-bold text-xs flex items-center gap-2 transition"
-            >
-              Scan Join QR
+            <button onClick={() => handleNavigate('landing')} className="text-slate-500 hover:text-white transition">
+               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
             </button>
-
-            <button
-              onClick={() => setShowSettings(!showSettings)}
-              className={`p-2 rounded-full transition ${showSettings ? 'bg-amber-500 text-slate-900' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
-              title="Membership Settings"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <h1 className="text-xl font-black tracking-tighter text-white uppercase">ADMIN <span className="text-amber-500 ml-1">PANEL</span></h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <button onClick={openSettings} className="p-2 rounded-full bg-slate-800 text-slate-400 hover:text-white transition">
+               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
-
-            {!state.isAddingMember && (
-              <button
-                onClick={() => setState(prev => ({ ...prev, isAddingMember: true }))}
-                className="bg-amber-500 hover:bg-amber-600 text-slate-900 px-4 py-2 rounded-full font-bold text-sm flex items-center gap-2 transition shadow-lg shadow-amber-500/20"
-              >
-                <PlusIcon /> New Entry
-              </button>
-            )}
+            <button onClick={loadCloudData} disabled={isSyncing} className={`p-2 rounded-full bg-slate-800 text-slate-400 hover:text-white transition ${isSyncing ? 'animate-spin' : ''}`}>
+               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 12c0-4.4 3.6-8 8-8 3.3 0 6.2 2 7.4 4.9M22 12c0 4.4-3.6 8-8 8-3.3 0-6.2-2-7.4-4.9"/></svg>
+            </button>
+            <button onClick={() => setState(prev => ({...prev, isAddingMember: true}))} className="bg-amber-500 hover:bg-amber-400 text-slate-900 px-6 py-2 rounded-full font-black text-xs uppercase shadow-lg shadow-amber-500/20 transition">Register Athlete</button>
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 mt-8">
-        {showSettings && (
-          <div className="mb-8 p-6 bg-slate-900 border border-amber-500/30 rounded-3xl animate-in slide-in-from-top duration-300 shadow-2xl">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-black text-white uppercase">Gym Fee Settings</h2>
-              <button onClick={() => setShowSettings(false)} className="text-slate-500 hover:text-white">✕</button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {(Object.keys(MembershipTier) as Array<keyof typeof MembershipTier>).map((key) => {
-                const tier = MembershipTier[key];
-                const config = state.tierSettings[tier];
-                return (
-                  <div key={tier} className="bg-slate-800/50 p-5 rounded-2xl border border-slate-700">
-                    <label className="block text-[10px] font-black text-amber-500 uppercase tracking-widest mb-3">{tier} Tier Fee (₹)</label>
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl font-black text-slate-400">₹</span>
-                      <input 
-                        type="number"
-                        value={config.price}
-                        onChange={(e) => handlePriceUpdate(tier, parseInt(e.target.value) || 0)}
-                        className="bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xl font-black text-white w-full outline-none focus:ring-2 focus:ring-amber-500"
-                      />
-                    </div>
-                    <p className="text-[9px] text-slate-500 mt-2 italic">Auto-calculated for {config.durationMonths} month(s) duration.</p>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-6 flex justify-end">
-               <p className="text-xs text-emerald-500 font-bold flex items-center gap-2">
-                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                 Prices auto-saved to system
-               </p>
-            </div>
-          </div>
-        )}
-
         {!state.isAddingMember && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-10">
-            <div className="bg-slate-900/50 border border-slate-800 p-6 rounded-2xl shadow-xl">
-              <p className="text-slate-500 text-[10px] font-bold uppercase mb-1">Active</p>
-              <h4 className="text-2xl sm:text-4xl font-black text-amber-500">{stats.total}</h4>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10">
+            <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl">
+              <p className="text-slate-500 text-[9px] font-black uppercase mb-1">Active Members</p>
+              <h4 className="text-4xl font-black text-white tracking-tighter">{stats.total}</h4>
             </div>
-            <div className="bg-slate-900/50 border border-amber-500/30 p-6 rounded-2xl shadow-xl">
-              <p className="text-slate-500 text-[10px] font-bold uppercase mb-1">Pending</p>
-              <h4 className="text-2xl sm:text-4xl font-black text-white">{stats.pending}</h4>
+            <div className="bg-slate-900 border border-amber-500/30 p-6 rounded-3xl">
+              <p className="text-amber-500 text-[9px] font-black uppercase mb-1">Pending Approval</p>
+              <h4 className="text-4xl font-black text-amber-500 tracking-tighter">{stats.pending}</h4>
             </div>
-            <div className="bg-slate-900/50 border border-slate-800 p-6 rounded-2xl shadow-xl">
-              <p className="text-slate-500 text-[10px] font-bold uppercase mb-1">Premium</p>
-              <h4 className="text-2xl sm:text-4xl font-black text-white">{stats.premium}</h4>
-            </div>
-            <div className="bg-slate-900/50 border border-slate-800 p-6 rounded-2xl shadow-xl">
-              <p className="text-slate-500 text-[10px] font-bold uppercase mb-1">Revenue</p>
-              <h4 className="text-2xl sm:text-4xl font-black text-emerald-500">₹{stats.activeRevenue}</h4>
+            <div className="bg-slate-900 border border-emerald-500/30 p-6 rounded-3xl">
+              <p className="text-emerald-500 text-[9px] font-black uppercase mb-1">Total Revenue</p>
+              <h4 className="text-3xl font-black text-emerald-400 tracking-tighter">₹{stats.revenue.toLocaleString()}</h4>
             </div>
           </div>
         )}
 
-        <div className="min-h-[500px]">
-          {state.isAddingMember ? (
-            <MemberForm 
-              onAdd={handleAddMember} 
-              onCancel={() => setState(prev => ({ ...prev, isAddingMember: false }))}
-              tierSettings={state.tierSettings}
+        {state.isAddingMember ? (
+          <MemberForm 
+            onAdd={handleAddMember} 
+            onCancel={() => setState(prev => ({ ...prev, isAddingMember: false }))} 
+            tierSettings={state.tierSettings} 
+            ptSettings={state.ptSettings}
+            gymUpiId={state.adminConfig.upiId} 
+          />
+        ) : (
+          <>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+               <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Athlete Database</h2>
+               <div className="flex gap-3">
+                  <input 
+                    type="text" 
+                    placeholder="Search name, phone..." 
+                    value={state.searchTerm} 
+                    onChange={e => setState(prev => ({ ...prev, searchTerm: e.target.value }))} 
+                    className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-xs focus:ring-1 focus:ring-amber-500 outline-none w-full sm:w-64" 
+                  />
+               </div>
+            </div>
+            <MemberList 
+              members={state.members} 
+              onDelete={(id) => {
+                const member = state.members.find(m => m.id === id);
+                if (member) setMemberToConfirmDelete(member);
+              }} 
+              onSelect={(m) => { if (m.status === MemberStatus.ACTIVE) setSelectedMember(m); }} 
+              onApprove={handleApprove} 
+              searchTerm={state.searchTerm} 
+              sortOrder={state.sortOrder} 
+              tierSettings={state.tierSettings} 
             />
-          ) : (
-            <>
-              <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
-                 <h2 className="text-2xl font-black text-white uppercase tracking-tight">Athlete Directory</h2>
-                 <div className="flex items-center gap-4">
-                   <button 
-                    onClick={toggleSort}
-                    className="bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-2 text-xs font-bold text-slate-300 transition whitespace-nowrap"
-                   >
-                     Sort: {state.sortOrder === 'newest' ? 'Newest' : 'Oldest'}
-                   </button>
-                 </div>
-              </div>
-              <MemberList 
-                members={state.members} 
-                onDelete={handleDeleteMember}
-                onSelect={(m) => {
-                  window.location.hash = `#profile/${m.id}`;
-                }}
-                onApprove={handleApprove}
-                searchTerm={state.searchTerm}
-                sortOrder={state.sortOrder}
-                tierSettings={state.tierSettings}
-              />
-            </>
-          )}
-        </div>
+          </>
+        )}
       </main>
 
-      {selectedMember && (
-        <MemberProfileView 
-          member={selectedMember} 
-          onClose={closeProfile} 
-        />
-      )}
+      {selectedMember && <MemberProfileView member={selectedMember} attendance={state.attendance} onClose={() => setSelectedMember(null)} onUpdateMember={handleUpdateMember} />}
+      
+      {showSettings && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/95 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-[2.5rem] p-8 md:p-10 shadow-2xl flex flex-col max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <h3 className="text-2xl font-black text-white mb-6 uppercase tracking-tighter text-center">Gym Configuration</h3>
+            
+            <div className="space-y-10">
+               <div className="text-left">
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Gym UPI ID (For Payments)</label>
+                  <input 
+                    type="text"
+                    value={tempSettings.upiId}
+                    onChange={(e) => setTempSettings(prev => ({ ...prev, upiId: e.target.value }))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-4 text-amber-500 font-mono text-sm focus:ring-2 focus:ring-amber-500 outline-none transition"
+                  />
+               </div>
 
-      {showJoinQR && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/95 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-10 text-center shadow-2xl">
-            <button 
-              onClick={() => setShowJoinQR(false)}
-              className="absolute top-6 right-6 text-slate-500 hover:text-white transition p-2 bg-slate-800 rounded-full h-10 w-10 flex items-center justify-center"
-            >✕</button>
-            <h3 className="text-2xl font-black text-white mb-2 uppercase tracking-tighter">Registration QR</h3>
-            <p className="text-sm text-slate-400 mb-8 leading-relaxed">Let members register on their own phones.</p>
-            <div className="bg-white p-8 rounded-3xl mx-auto shadow-inner border-4 border-amber-500 mb-8">
-              <img src={joinQRUrl} alt="Join QR" className="w-full h-auto rounded-lg" />
+               <div>
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mb-6 border-b border-slate-800 pb-2">Membership Fees Matrix (INR)</h4>
+                  <div className="space-y-8">
+                    {Object.values(MembershipTier).map(tier => (
+                      <div key={tier} className="bg-slate-950/50 p-6 rounded-2xl border border-slate-800">
+                        <label className="text-xs font-black text-amber-500 uppercase mb-4 block tracking-wider">{tier} TIER</label>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                          {[1, 3, 6, 12].map(duration => (
+                            <div key={duration}>
+                              <p className="text-[9px] text-slate-500 font-bold mb-1 uppercase">{duration} Month{duration > 1 ? 's' : ''}</p>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-[10px] font-bold">₹</span>
+                                <input 
+                                  type="number"
+                                  value={tempSettings.prices[tier][duration]}
+                                  onChange={(e) => {
+                                    const updated = { ...tempSettings.prices };
+                                    updated[tier][duration] = parseInt(e.target.value) || 0;
+                                    setTempSettings(prev => ({ ...prev, prices: updated }));
+                                  }}
+                                  className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-6 pr-2 py-2 text-white font-mono text-xs focus:ring-1 focus:ring-amber-500 outline-none transition"
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+               </div>
+
+               <div>
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mb-6 border-b border-slate-800 pb-2">Personal Training Fees (INR)</h4>
+                  <div className="bg-slate-950/50 p-6 rounded-2xl border border-slate-800">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      {[1, 3, 6, 12].map(duration => (
+                        <div key={duration}>
+                          <p className="text-[9px] text-slate-500 font-bold mb-1 uppercase">{duration} Month{duration > 1 ? 's' : ''}</p>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-[10px] font-bold">₹</span>
+                            <input 
+                              type="number"
+                              value={tempSettings.ptPrices[duration]}
+                              onChange={(e) => {
+                                const updated = { ...tempSettings.ptPrices };
+                                updated[duration as keyof PTSettings] = parseInt(e.target.value) || 0;
+                                setTempSettings(prev => ({ ...prev, ptPrices: updated }));
+                              }}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-6 pr-2 py-2 text-white font-mono text-xs focus:ring-1 focus:ring-amber-500 outline-none transition"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+               </div>
             </div>
-            <p className="text-amber-500 font-mono text-[10px] font-bold tracking-tight mb-8 break-all opacity-60 bg-slate-950 p-3 rounded-lg border border-slate-800">
-              {joinLink}
-            </p>
-            <div className="grid grid-cols-2 gap-4">
-              <button 
-                onClick={() => window.print()}
-                className="py-4 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700 transition border border-slate-700"
-              >
-                Print Poster
-              </button>
-              <button 
-                onClick={() => setShowJoinQR(false)}
-                className="py-4 bg-amber-500 text-slate-900 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-amber-400 transition shadow-lg shadow-amber-500/20"
-              >
-                Back to Dashboard
-              </button>
+
+            <div className="flex gap-4 mt-12">
+              <button onClick={() => setShowSettings(false)} className="flex-1 py-4 bg-slate-800 text-slate-400 rounded-2xl font-black uppercase text-[10px] tracking-widest transition hover:bg-slate-700">Cancel</button>
+              <button onClick={saveConfiguration} className="flex-[2] py-4 bg-amber-500 text-slate-900 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-amber-400 transition shadow-lg shadow-amber-500/20 active:scale-95">Apply Settings</button>
             </div>
           </div>
         </div>
       )}
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+      `}</style>
     </div>
   );
 };

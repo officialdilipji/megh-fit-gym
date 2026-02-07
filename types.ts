@@ -5,9 +5,12 @@ export enum MembershipTier {
   PREMIUM = 'Premium'
 }
 
+export type DurationMonths = 1 | 3 | 6 | 12;
+
 export enum PaymentMethod {
   UPI = 'UPI',
-  CASH = 'Cash'
+  CASH = 'Cash',
+  LATER = 'Pay Later'
 }
 
 export enum Gender {
@@ -23,14 +26,28 @@ export enum MemberStatus {
 
 export type SortOrder = 'newest' | 'oldest';
 
-export interface TierConfig {
-  price: number;
-  features: string[];
-  durationMonths: number;
-  color: string;
+export interface TierPriceConfig {
+  [key: number]: number; // duration (months) -> price
 }
 
-export type TierSettings = Record<MembershipTier, TierConfig>;
+export type TierSettings = Record<MembershipTier, TierPriceConfig>;
+
+export interface PTSettings {
+  [key: number]: number; // duration (months) -> price
+}
+
+export interface AttendanceLog {
+  memberId: string;
+  checkIn: string;
+  checkOut: string;
+  date: string;
+}
+
+export interface AdminConfig {
+  username: string;
+  password: string;
+  upiId: string;
+}
 
 export interface Member {
   id: string;
@@ -39,16 +56,23 @@ export interface Member {
   gender: Gender;
   phone: string;
   email: string;
-  photo: string; // Base64
+  photo: string;
   tier: MembershipTier;
+  membershipDuration: DurationMonths;
+  hasPersonalTraining: boolean;
+  ptDuration?: DurationMonths;
+  totalPayable: number;
   amountPaid: number;
   paymentMethod: PaymentMethod;
-  transactionId?: string; // For UPI validation
+  paymentDueDate?: string;
+  transactionId?: string;
   fitnessGoals: string;
   joinDate: string;
   expiryDate: string;
+  ptExpiryDate?: string;
   timestamp: number;
   expiryTimestamp: number;
+  ptExpiryTimestamp?: number;
   status: MemberStatus;
   aiInsights?: string;
   registrationSource: 'Admin' | 'Client QR';
@@ -56,30 +80,26 @@ export interface Member {
 
 export interface AppState {
   members: Member[];
+  attendance: AttendanceLog[];
   isAddingMember: boolean;
   searchTerm: string;
   sortOrder: SortOrder;
-  currentView: 'admin' | 'client';
+  currentView: 'home' | 'admin' | 'client' | 'login' | 'landing';
+  isLoggedIn: boolean;
   tierSettings: TierSettings;
+  ptSettings: PTSettings;
+  adminConfig: AdminConfig;
 }
 
 export const DEFAULT_TIER_CONFIG: TierSettings = {
-  [MembershipTier.BASIC]: {
-    price: 1200,
-    features: ['General Gym Access', 'Standard Equipment', 'Locker Room'],
-    durationMonths: 1,
-    color: 'slate'
-  },
-  [MembershipTier.STANDARD]: {
-    price: 2500,
-    features: ['General Gym Access', 'Group Fitness Classes', '1 Guest Pass/Month'],
-    durationMonths: 3,
-    color: 'blue'
-  },
-  [MembershipTier.PREMIUM]: {
-    price: 5000,
-    features: ['24/7 Access', 'Personal Training (2/mo)', 'Steam & Sauna', 'Nutrition Plan'],
-    durationMonths: 12,
-    color: 'amber'
-  }
+  [MembershipTier.BASIC]: { 1: 1200, 3: 3200, 6: 6000, 12: 10000 },
+  [MembershipTier.STANDARD]: { 1: 2500, 3: 6500, 6: 12000, 12: 20000 },
+  [MembershipTier.PREMIUM]: { 1: 5000, 3: 13000, 6: 24000, 12: 45000 }
+};
+
+export const DEFAULT_PT_CONFIG: PTSettings = {
+  1: 3000,
+  3: 8000,
+  6: 15000,
+  12: 28000
 };
