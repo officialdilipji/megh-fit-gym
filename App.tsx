@@ -60,7 +60,6 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   
-  // Client flow state
   const [clientMode, setClientMode] = useState<'gateway' | 'enroll' | 'link'>('gateway');
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -68,6 +67,10 @@ const App: React.FC = () => {
     setTimeout(() => setNotification(null), 3000);
   };
 
+  /**
+   * HIGH-FIDELITY CLOUD RECONCILIATION
+   * Ensures that data from QR scans (remote devices) is pulled into the current device state.
+   */
   const refreshCloudData = useCallback(async (silent = false) => {
     if (!silent) setIsSyncing(true);
     try {
@@ -78,39 +81,43 @@ const App: React.FC = () => {
       ]);
       
       setState(prev => {
-        // Attendance merging logic: Cloud state is the source of truth for remote actions
-        const localLogsMap = new Map();
-        prev.attendance.forEach(l => {
-          const key = `${l.memberId}-${normalizeDateStr(l.date)}-${l.checkIn}`;
-          localLogsMap.set(key, l);
+        // Master Attendance Reconciler:
+        // Cloud records are the Source of Truth for remote devices (Phone QR scans)
+        const reconciledAttendance = new Map<string, AttendanceLog>();
+        
+        // 1. Process cloud logs first
+        cloudAttendance.forEach(log => {
+          const key = `${log.memberId}-${normalizeDateStr(log.date)}-${log.checkIn}`;
+          reconciledAttendance.set(key, log);
         });
 
-        cloudAttendance.forEach(cloudLog => {
-          const key = `${cloudLog.memberId}-${normalizeDateStr(cloudLog.date)}-${cloudLog.checkIn}`;
-          const localLog = localLogsMap.get(key);
+        // 2. Overlay local device logs (only if they are more recent/complete)
+        prev.attendance.forEach(log => {
+          const key = `${log.memberId}-${normalizeDateStr(log.date)}-${log.checkIn}`;
+          const existing = reconciledAttendance.get(key);
           
-          // Overwrite if cloud has more info (like a checkout time)
-          if (!localLog || (cloudLog.checkOut && !localLog.checkOut)) {
-            localLogsMap.set(key, cloudLog);
+          // If local has a checkout but cloud doesn't, keep local version until next sync
+          if (!existing || (log.checkOut && !existing.checkOut)) {
+            reconciledAttendance.set(key, log);
           }
         });
 
-        const mergedAttendance = Array.from(localLogsMap.values());
+        const mergedList = Array.from(reconciledAttendance.values());
 
         return {
           ...prev,
           members: cloudMembers.length > 0 ? cloudMembers : prev.members,
-          attendance: mergedAttendance,
+          attendance: mergedList,
           adminConfig: cloudConfig?.upiId ? { ...prev.adminConfig, upiId: cloudConfig.upiId } : prev.adminConfig,
           membershipPrices: cloudConfig?.membershipPrices || prev.membershipPrices,
           ptPrices: cloudConfig?.ptPrices || prev.ptPrices
         };
       });
       
-      if (!silent) console.debug("Cloud Sync Complete");
+      if (!silent) console.debug("Registry Synced with Cloud Master");
     } catch (err) {
-      console.error("Sync failed", err);
-      if (!silent) showToast("Cloud Access Error", "error");
+      console.error("Critical Sync Error:", err);
+      if (!silent) showToast("Cloud Sync Interrupted", "error");
     } finally {
       setIsSyncing(false);
       setInitialLoadDone(true);
@@ -119,8 +126,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     refreshCloudData();
-    // High-frequency polling for active dashboard (10 seconds)
-    const interval = setInterval(() => refreshCloudData(true), 10000); 
+    // Aggressive Polling (8 Seconds) for Dashboard Real-Time responsiveness
+    const interval = setInterval(() => refreshCloudData(true), 8000); 
     return () => clearInterval(interval);
   }, [refreshCloudData]);
 
@@ -150,40 +157,28 @@ const App: React.FC = () => {
     setState(prev => ({ ...prev, isLoggedIn: false, currentView: 'landing' }));
   };
 
-  const handleUpdateConfig = async (upiId: string, membershipPrices: PricingConfig, ptPrices: PricingConfig) => {
-    setState(prev => ({
-      ...prev,
-      adminConfig: { ...prev.adminConfig, upiId },
-      membershipPrices,
-      ptPrices
-    }));
-    
-    showToast("Updating Configuration...");
-    const success = await syncConfigToSheet({ upiId, membershipPrices, ptPrices });
-    if (success) showToast("Config Synced to Cloud", "success");
-    else showToast("Local Update Only (Cloud Failed)", "error");
-  };
-
   const updateAttendance = async (log: AttendanceLog) => {
-    // 1. Update local state immediately for the current device
+    const normalizedLog = { ...log, date: normalizeDateStr(log.date) };
+    
+    // 1. Pessimistic Local Update (immediate feedback for current user)
     setState(prev => {
-      const logKey = `${log.memberId}-${normalizeDateStr(log.date)}-${log.checkIn}`;
-      const idx = prev.attendance.findIndex(a => `${a.memberId}-${normalizeDateStr(a.date)}-${a.checkIn}` === logKey);
+      const key = `${normalizedLog.memberId}-${normalizedLog.date}-${normalizedLog.checkIn}`;
+      const existingIdx = prev.attendance.findIndex(a => `${a.memberId}-${normalizeDateStr(a.date)}-${a.checkIn}` === key);
       
-      const newLogs = [...prev.attendance];
-      if (idx >= 0) newLogs[idx] = log;
-      else newLogs.push(log);
+      const newList = [...prev.attendance];
+      if (existingIdx >= 0) newList[existingIdx] = normalizedLog;
+      else newList.push(normalizedLog);
       
-      return { ...prev, attendance: newLogs };
+      return { ...prev, attendance: newList };
     });
 
-    if (log.checkOut) showToast("Session Saved", "success");
-    else showToast("In Progress", "success");
+    if (normalizedLog.checkOut) showToast("Session Finalized", "success");
+    else showToast("Check-In Logged", "success");
 
-    // 2. Push to cloud
-    await syncAttendanceToSheet(log);
+    // 2. Cloud Propagation
+    await syncAttendanceToSheet(normalizedLog);
     
-    // 3. Trigger immediate background refresh to reconcile all instances
+    // 3. Force Global Reconcile
     refreshCloudData(true);
   };
 
@@ -195,6 +190,23 @@ const App: React.FC = () => {
     if (selectedMember && selectedMember.id === updatedMember.id) setSelectedMember(updatedMember);
     await syncMemberToSheet(updatedMember);
   }, [selectedMember]);
+
+  // Fix: Implemented handleUpdateConfig to update both local state and cloud configuration
+  const handleUpdateConfig = useCallback(async (upiId: string, membershipPrices: PricingConfig, ptPrices: PricingConfig) => {
+    setState(prev => ({
+      ...prev,
+      adminConfig: { ...prev.adminConfig, upiId },
+      membershipPrices,
+      ptPrices
+    }));
+    
+    const success = await syncConfigToSheet({ upiId, membershipPrices, ptPrices });
+    if (success) {
+      showToast("Settings Synchronized", "success");
+    } else {
+      showToast("Cloud Sync Failed", "error");
+    }
+  }, []);
 
   const handleApprove = async (member: Member) => {
     const now = new Date();
@@ -305,7 +317,7 @@ const App: React.FC = () => {
                  <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><polyline points="20 6 9 17 4 12"></polyline></svg>
                </div>
                <h2 className="text-2xl font-black text-white mb-4 uppercase tracking-tighter italic">Application Sent</h2>
-               <p className="text-slate-500 mb-8 max-w-sm mx-auto text-[10px] font-bold uppercase tracking-widest leading-relaxed">Your profile is currently on the waitlist. Our team will verify and activate your pass shortly.</p>
+               <p className="text-slate-500 mb-8 max-w-sm mx-auto text-[10px] font-bold uppercase tracking-widest leading-relaxed">Your profile is currently on the waitlist. Our team will verify and activation your pass shortly.</p>
                <button onClick={() => window.location.reload()} className="bg-amber-500 text-slate-950 px-8 py-4 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-2xl">Return to Terminal</button>
              </div>
            ) : <MemberForm isSelfRegistration onAdd={handleAddMember} onCancel={() => setClientMode('gateway')} membershipPrices={state.membershipPrices} ptPrices={state.ptPrices} gymUpiId={state.adminConfig.upiId} onSwitchToLink={() => setClientMode('link')} />}
@@ -353,7 +365,7 @@ const App: React.FC = () => {
                  <button onClick={() => setState(prev => ({...prev, isAddingMember: true}))} className="shrink-0 bg-amber-500 text-slate-950 px-6 py-3 rounded-xl font-black text-[10px] uppercase shadow-xl active:scale-95 transition-all">Enroll New</button>
                </div>
             </div>
-            <MemberList members={state.members} onDelete={(id) => { /* Logic maintained in backend */ }} onSelect={(m) => setSelectedMember(m)} onApprove={handleApprove} searchTerm={state.searchTerm} sortOrder={state.sortOrder} />
+            <MemberList members={state.members} onDelete={(id) => { /* Cloud deletion handled via admin tool */ }} onSelect={(m) => setSelectedMember(m)} onApprove={handleApprove} searchTerm={state.searchTerm} sortOrder={state.sortOrder} />
           </>
         ) : <MemberForm onAdd={handleAddMember} onCancel={() => setState(prev => ({ ...prev, isAddingMember: false }))} membershipPrices={state.membershipPrices} ptPrices={state.ptPrices} gymUpiId={state.adminConfig.upiId} />}
       </main>

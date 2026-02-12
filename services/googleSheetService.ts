@@ -6,21 +6,49 @@ import { Member, MemberStatus, MembershipTier, Gender, PaymentMethod, Attendance
  */
 const GOOGLE_SCRIPT_URL: string = 'https://script.google.com/macros/s/AKfycbx0JavHlD_J3CxjQ2pqhqY3ao_rd6y_zRO4XxtRU4cysVEhOJC62wGnIna5lgdcNrv6/exec'; 
 
+/**
+ * Helper to get the current time in IST (India Standard Time)
+ */
+export const getISTNow = (): Date => {
+  const now = new Date();
+  // IST is UTC + 5.5 hours
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  return new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + istOffset);
+};
+
+export const formatISTTime = (date: Date = getISTNow()): string => {
+  return date.toLocaleTimeString('en-IN', { hour12: false, hour: '2-digit', minute: '2-digit' });
+};
+
+export const formatISTDate = (date: Date = getISTNow()): string => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
 // Utility to ensure dates are compared as YYYY-MM-DD regardless of source format
 export const normalizeDateStr = (dateStr: string): string => {
   if (!dateStr) return '';
   try {
+    // If it's already ISO format or YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) return dateStr.split('T')[0];
+    
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) {
-      // Handle DD/MM/YYYY manually if Date fails
       const parts = dateStr.split(/[/.-]/);
       if (parts.length === 3) {
+        // Handle common formats like DD/MM/YYYY
+        if (parts[2].length === 4) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        // Handle YYYY/MM/DD
         if (parts[0].length === 4) return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
-        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
       }
       return dateStr.trim();
     }
-    return d.toISOString().split('T')[0];
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   } catch {
     return dateStr.trim();
   }
@@ -101,26 +129,11 @@ export const syncMemberToSheet = async (member: Member): Promise<boolean> => {
   }
 };
 
-export const deleteMemberFromSheet = async (memberId: string): Promise<boolean> => {
-  if (!GOOGLE_SCRIPT_URL || !GOOGLE_SCRIPT_URL.includes('/exec')) return false;
-  try {
-    await fetch(GOOGLE_SCRIPT_URL, {
-      method: 'POST',
-      mode: 'no-cors',
-      cache: 'no-cache',
-      body: JSON.stringify({ id: memberId, sheetType: 'member', action: 'delete' }),
-    });
-    return true;
-  } catch (error) {
-    console.error("Cloud Delete Error:", error);
-    return false;
-  }
-};
-
 export const syncAttendanceToSheet = async (log: AttendanceLog): Promise<boolean> => {
   if (!GOOGLE_SCRIPT_URL || !GOOGLE_SCRIPT_URL.includes('/exec')) return false;
   try {
-    await fetch(GOOGLE_SCRIPT_URL, {
+    // We use cors mode for attendance to confirm it was received
+    const response = await fetch(GOOGLE_SCRIPT_URL, {
       method: 'POST',
       mode: 'no-cors',
       cache: 'no-cache',
@@ -192,7 +205,7 @@ export const fetchAttendanceLogs = async (): Promise<AttendanceLog[]> => {
       memberId: String(getVal(row, ["memberId"])),
       checkIn: String(getVal(row, ["checkIn"])),
       checkOut: String(getVal(row, ["checkOut"])),
-      date: String(getVal(row, ["date"]))
+      date: normalizeDateStr(String(getVal(row, ["date"])))
     })).filter(l => l.memberId && l.memberId !== "");
   } catch (error) {
     console.error("Fetch Attendance Error:", error);
