@@ -10,9 +10,18 @@ interface MemberFormProps {
   membershipPrices: PricingConfig;
   ptPrices: PricingConfig;
   gymUpiId?: string;
+  onSwitchToLink?: () => void;
 }
 
-const MemberForm: React.FC<MemberFormProps> = ({ onAdd, onCancel, membershipPrices, ptPrices, isSelfRegistration = false, gymUpiId = 'meghfit@upi' }) => {
+const MemberForm: React.FC<MemberFormProps> = ({ 
+  onAdd, 
+  onCancel, 
+  membershipPrices, 
+  ptPrices, 
+  isSelfRegistration = false, 
+  gymUpiId = 'meghfit@upi',
+  onSwitchToLink
+}) => {
   const [formData, setFormData] = useState({
     name: '',
     age: '',
@@ -54,7 +63,7 @@ const MemberForm: React.FC<MemberFormProps> = ({ onAdd, onCancel, membershipPric
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting) return; // Immediate lock
+    if (isSubmitting) return; 
     if (!validate()) return;
     
     setIsSubmitting(true);
@@ -94,7 +103,6 @@ const MemberForm: React.FC<MemberFormProps> = ({ onAdd, onCancel, membershipPric
       registrationSource: isSelfRegistration ? 'Client QR' : 'Admin'
     };
 
-    // Store ID locally for smart QR routing
     if (isSelfRegistration) {
       localStorage.setItem('meghfit_registered_id', memberId);
     }
@@ -107,9 +115,20 @@ const MemberForm: React.FC<MemberFormProps> = ({ onAdd, onCancel, membershipPric
 
   return (
     <div className="bg-slate-900 border border-slate-800 p-6 md:p-10 rounded-[3rem] shadow-2xl w-full max-w-5xl mx-auto mb-10 animate-in slide-in-from-bottom-8 duration-700">
-      <header className="mb-10 text-center sm:text-left border-b border-slate-800 pb-6">
-        <h2 className="text-3xl font-black text-white uppercase tracking-tighter italic underline underline-offset-8 decoration-amber-500/30">Athlete Admission</h2>
-        <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mt-2 italic">Forge your future at Megh Fit</p>
+      <header className="mb-10 flex flex-col sm:flex-row sm:items-end justify-between border-b border-slate-800 pb-6 gap-4">
+        <div>
+          <h2 className="text-3xl font-black text-white uppercase tracking-tighter italic underline underline-offset-8 decoration-amber-500/30">Athlete Admission</h2>
+          <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mt-2 italic">Forge your future at Megh Fit</p>
+        </div>
+        {isSelfRegistration && onSwitchToLink && (
+          <button 
+            type="button" 
+            onClick={onSwitchToLink}
+            className="px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-[9px] font-black text-amber-500 uppercase tracking-widest hover:bg-slate-800 transition-all"
+          >
+            Already a member? Check In
+          </button>
+        )}
       </header>
       
       <form onSubmit={handleSubmit} className="space-y-12">

@@ -9,6 +9,8 @@ import HomeView from './components/HomeView';
 import LandingView from './components/LandingView';
 import SelfServiceView from './components/SelfServiceView';
 import AdminSettings from './components/AdminSettings';
+import ClientPortal from './components/ClientPortal';
+import IdentityRecovery from './components/IdentityRecovery';
 import { getFitnessInsights } from './services/geminiService';
 import { syncMemberToSheet, fetchMembersFromSheet, syncAttendanceToSheet, fetchAttendanceLogs, deleteMemberFromSheet, fetchConfigFromSheet, syncConfigToSheet, normalizeDateStr } from './services/googleSheetService';
 
@@ -60,6 +62,9 @@ const App: React.FC = () => {
   const [memberToConfirmDelete, setMemberToConfirmDelete] = useState<Member | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
+  
+  // Client flow state
+  const [clientMode, setClientMode] = useState<'gateway' | 'enroll' | 'link'>('gateway');
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
@@ -214,6 +219,12 @@ const App: React.FC = () => {
     if (state.currentView === 'client') setJustSubmitted(true);
   };
 
+  const handleLinkIdentity = (id: string) => {
+    localStorage.setItem('meghfit_registered_id', id);
+    showToast("Identity Linked Successfully", "success");
+    // This will trigger a re-render and match the identifiedMember logic below
+  };
+
   const registeredId = localStorage.getItem('meghfit_registered_id');
   const identifiedMember = registeredId ? state.members.find(m => m.id === registeredId) : null;
 
@@ -232,6 +243,7 @@ const App: React.FC = () => {
   if (state.currentView === 'login') return <AdminLogin onLogin={() => { sessionStorage.setItem('admin_logged_in', 'true'); setState(prev => ({...prev, isLoggedIn: true, currentView: 'admin'})); }} adminConfig={state.adminConfig} />;
   
   if (state.currentView === 'client') {
+    // Stage 1: If we have a verified identity, show terminal immediately
     if (identifiedMember && identifiedMember.status === MemberStatus.ACTIVE) {
       return (
         <SelfServiceView 
@@ -243,6 +255,8 @@ const App: React.FC = () => {
         />
       );
     }
+    
+    // Stage 2: If identified but pending
     if (identifiedMember && identifiedMember.status === MemberStatus.PENDING) {
       return (
         <div className="min-h-screen p-6 flex items-center justify-center bg-slate-950 text-slate-200">
@@ -257,11 +271,33 @@ const App: React.FC = () => {
         </div>
       );
     }
+
+    // Stage 3: Routing for unrecognized users
+    if (clientMode === 'gateway') {
+      return (
+        <div className="min-h-screen p-4 bg-slate-950 flex flex-col">
+           <header className="p-4 flex items-center justify-between">
+             <button onClick={() => handleNavigate('landing')} className="text-amber-500 font-black text-[10px] uppercase tracking-widest">← Home</button>
+           </header>
+           <ClientPortal onSelectEnroll={() => setClientMode('enroll')} onSelectLink={() => setClientMode('link')} />
+        </div>
+      );
+    }
+
+    if (clientMode === 'link') {
+      return (
+        <div className="min-h-screen p-4 bg-slate-950 flex flex-col">
+           <IdentityRecovery members={state.members} onLink={handleLinkIdentity} onCancel={() => setClientMode('gateway')} />
+        </div>
+      );
+    }
+
+    // Default to Enrollment Form if 'enroll' selected
     return (
       <div className="min-h-screen p-4 md:p-8 bg-slate-950 text-slate-200">
         <div className="max-w-4xl mx-auto">
            <header className="mb-8 flex items-center justify-between">
-             <button onClick={() => handleNavigate('landing')} className="text-amber-500 font-black text-[10px] uppercase tracking-widest flex items-center gap-2">← Home</button>
+             <button onClick={() => setClientMode('gateway')} className="text-amber-500 font-black text-[10px] uppercase tracking-widest flex items-center gap-2">← Gateway</button>
              <h1 className="text-xl font-black text-white tracking-tighter uppercase italic">Athlete Admission</h1>
              <div className="w-10"></div>
            </header>
@@ -274,7 +310,7 @@ const App: React.FC = () => {
                <p className="text-slate-500 mb-8 max-w-sm mx-auto text-[10px] font-bold uppercase tracking-widest leading-relaxed">Your profile is currently on the waitlist. Our team will verify and activate your pass shortly.</p>
                <button onClick={() => window.location.reload()} className="bg-amber-500 text-slate-950 px-8 py-4 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-2xl">Return to Terminal</button>
              </div>
-           ) : <MemberForm isSelfRegistration onAdd={handleAddMember} onCancel={() => handleNavigate('landing')} membershipPrices={state.membershipPrices} ptPrices={state.ptPrices} gymUpiId={state.adminConfig.upiId} />}
+           ) : <MemberForm isSelfRegistration onAdd={handleAddMember} onCancel={() => setClientMode('gateway')} membershipPrices={state.membershipPrices} ptPrices={state.ptPrices} gymUpiId={state.adminConfig.upiId} onSwitchToLink={() => setClientMode('link')} />}
         </div>
       </div>
     );
