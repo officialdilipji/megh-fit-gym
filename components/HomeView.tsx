@@ -95,7 +95,12 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
     attendance.filter(a => normalizeDateStr(a.date) === todayIso).length
   , [attendance, todayIso]);
 
-  const joinQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(window.location.origin + window.location.pathname + '#join')}&color=0f172a&bgcolor=ffffff`;
+  // Robust Enrollment QR URL Generation
+  const joinQrUrl = useMemo(() => {
+    const baseUrl = window.location.href.split('#')[0].split('?')[0];
+    const enrollLink = `${baseUrl}#join`;
+    return `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(enrollLink)}&color=0f172a&bgcolor=ffffff&qzone=2`;
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col font-sans overflow-x-hidden">
@@ -112,13 +117,13 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
           </div>
           <div className="flex items-center gap-2 md:hidden">
             <p className="text-sm font-mono font-black text-white bg-slate-800 px-3 py-2 rounded-xl border border-slate-700">
-              {currentTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+              {currentTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })}
             </p>
           </div>
         </div>
         
         <div className="flex items-center gap-2 w-full md:w-auto">
-          <button onClick={() => setShowJoinModal(true)} className="flex-1 md:flex-none flex items-center justify-center gap-2.5 bg-amber-500/10 border border-amber-500/20 px-4 py-3 rounded-xl transition-all hover:bg-amber-500/20">
+          <button onClick={() => setShowJoinModal(true)} className="flex-1 md:flex-none flex items-center justify-center gap-2.5 bg-amber-500/10 border border-amber-500/20 px-4 py-3 rounded-xl transition-all hover:bg-amber-500/20 active:scale-95">
             <span className="text-[9px] font-black uppercase text-amber-500 tracking-widest">Athlete Gateway</span>
             <div className="p-1 bg-white rounded-md shadow-lg">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0f172a" strokeWidth="3"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
@@ -126,7 +131,7 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
           </button>
           <div className="hidden md:flex flex-col items-end">
             <p className="text-2xl font-mono font-black text-white leading-none tabular-nums">
-              {currentTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+              {currentTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })}
             </p>
             <p className="text-[10px] text-slate-500 font-bold uppercase mt-1 tracking-widest">
               {currentTime.toLocaleDateString('en-IN', { weekday: 'short', month: 'long', day: 'numeric' })} IST
@@ -255,6 +260,36 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
                    <button type="submit" className="flex-[2] py-5 bg-amber-500 text-slate-950 rounded-2xl font-black uppercase text-[10px] tracking-widest">Allow Access</button>
                 </div>
              </form>
+          </div>
+        </div>
+      )}
+
+      {/* FIXED QR MODAL: Enrollment Gateway */}
+      {showJoinModal && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-slate-950/95 backdrop-blur-2xl" onClick={() => setShowJoinModal(false)}>
+          <div className="bg-slate-900 border border-slate-800 rounded-[3rem] p-8 max-w-xs w-full shadow-2xl text-center relative animate-in zoom-in-95 duration-300" onClick={e => e.stopPropagation()}>
+             <button onClick={() => setShowJoinModal(false)} className="absolute top-6 right-6 text-slate-600 hover:text-white transition">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+             </button>
+             <h3 className="text-xl font-black text-white uppercase tracking-tighter mb-8 italic">Enrollment Gateway</h3>
+             <div className="bg-white p-6 rounded-[2.5rem] shadow-2xl mb-8 flex items-center justify-center">
+               <img 
+                 src={joinQrUrl} 
+                 alt="Scan for Admission" 
+                 className="w-full aspect-square object-contain"
+                 onError={(e) => {
+                   const target = e.target as HTMLImageElement;
+                   target.style.display = 'none';
+                   const parent = target.parentElement;
+                   if (parent) {
+                     parent.innerHTML = '<div class="text-[10px] font-black text-slate-900 uppercase p-4">QR Generation Failed. Please Check Connectivity.</div>';
+                   }
+                 }}
+               />
+             </div>
+             <p className="text-slate-500 text-[9px] font-black mb-4 uppercase tracking-[0.2em] leading-relaxed italic">Direct athletes to scan this for new admission or check-in.</p>
+             <div className="h-px bg-slate-800 w-full mb-6"></div>
+             <p className="text-amber-500 text-[10px] font-black uppercase tracking-widest">IST Terminal Active</p>
           </div>
         </div>
       )}

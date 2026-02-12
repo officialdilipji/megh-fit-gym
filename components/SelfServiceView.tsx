@@ -24,7 +24,7 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
   const [currentTime, setCurrentTime] = useState(getISTNow());
   const [isProcessing, setIsProcessing] = useState(false);
   
-  // Strict IST Date for session matching
+  // Strict IST Date for session matching - ensuring phone and laptop agree on "today"
   const todayIso = useMemo(() => formatISTDate(currentTime), [currentTime.getDate()]);
 
   useEffect(() => {
@@ -46,11 +46,11 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
     if (isProcessing) return;
     setIsProcessing(true);
 
+    // Explicitly generate timing in IST regardless of user device local settings
     const timeStr = formatISTTime();
 
     try {
       if (type === 'in') {
-        // This will push to Google Sheet and wait for confirmation
         await onUpdateAttendance({ memberId: member.id, checkIn: timeStr, checkOut: '', date: todayIso });
       } else if (type === 'out') {
         if (latestLog && latestLog.checkIn && !latestLog.checkOut) {
@@ -59,10 +59,10 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
       }
     } catch (err) {
       console.error("Sync Failure:", err);
-      alert("Network Error. Please retry.");
+      alert("Network Handshake Error. Please retry.");
     } finally {
-      // Buffer to ensure the admin dashboard's poll has a chance to see the new data
-      setTimeout(() => setIsProcessing(false), 800);
+      // Force a slight delay to allow the Admin Dashboard to pick up the polling update
+      setTimeout(() => setIsProcessing(false), 1200);
     }
   };
 
@@ -96,10 +96,10 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
 
           <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 text-center space-y-1 mb-6 shadow-inner">
              <p className="text-3xl font-mono font-black text-white tracking-tight tabular-nums">
-               {currentTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+               {currentTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })}
              </p>
              <p className="text-[8px] text-slate-500 font-bold uppercase tracking-widest">
-               {currentTime.toLocaleDateString('en-IN', { weekday: 'long', month: 'short', day: 'numeric' })}
+               {currentTime.toLocaleDateString('en-IN', { weekday: 'long', month: 'short', day: 'numeric' })} IST
              </p>
           </div>
 
