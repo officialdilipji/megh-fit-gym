@@ -26,15 +26,8 @@ export enum MemberStatus {
 
 export type SortOrder = 'newest' | 'oldest';
 
-export interface TierPriceConfig {
-  [key: number]: number; // duration (months) -> price
-}
-
-export type TierSettings = Record<MembershipTier, TierPriceConfig>;
-
-export interface PTSettings {
-  [key: number]: number; // duration (months) -> price
-}
+// Simplified pricing: just a record of months -> price
+export type PricingConfig = Record<number, number>;
 
 export interface AttendanceLog {
   memberId: string;
@@ -69,10 +62,9 @@ export interface Member {
   fitnessGoals: string;
   joinDate: string;
   expiryDate: string;
-  ptExpiryDate?: string;
+  ptExpiryDate?: string; // Fix for missing property error in sync logic
   timestamp: number;
   expiryTimestamp: number;
-  ptExpiryTimestamp?: number;
   status: MemberStatus;
   aiInsights?: string;
   registrationSource: 'Admin' | 'Client QR';
@@ -86,20 +78,21 @@ export interface AppState {
   sortOrder: SortOrder;
   currentView: 'home' | 'admin' | 'client' | 'login' | 'landing';
   isLoggedIn: boolean;
-  tierSettings: TierSettings;
-  ptSettings: PTSettings;
+  membershipPrices: PricingConfig;
+  ptPrices: PricingConfig;
   adminConfig: AdminConfig;
 }
 
-export const DEFAULT_TIER_CONFIG: TierSettings = {
-  [MembershipTier.BASIC]: { 1: 1200, 3: 3200, 6: 6000, 12: 10000 },
-  [MembershipTier.STANDARD]: { 1: 2500, 3: 6500, 6: 12000, 12: 20000 },
-  [MembershipTier.PREMIUM]: { 1: 5000, 3: 13000, 6: 24000, 12: 45000 }
+export const DEFAULT_MEMBERSHIP_PRICES: PricingConfig = {
+  1: 3000,
+  3: 6000,
+  6: 9000,
+  12: 15000
 };
 
-export const DEFAULT_PT_CONFIG: PTSettings = {
+export const DEFAULT_PT_PRICES: PricingConfig = {
   1: 3000,
-  3: 8000,
-  6: 15000,
-  12: 28000
+  3: 6000,
+  6: 9000,
+  12: 15000
 };

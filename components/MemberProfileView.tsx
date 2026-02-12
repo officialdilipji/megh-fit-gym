@@ -18,21 +18,21 @@ const MemberProfileView: React.FC<MemberProfileViewProps> = ({ member, attendanc
   // Robust financial values
   const total = parseFloat(String(member.totalPayable || 0));
   const paid = parseFloat(String(member.amountPaid || 0));
-  const balance = Math.max(0, total - paid);
+  const balance = Math.round(Math.max(0, total - paid) * 100) / 100;
   const hasBalance = balance > 0;
 
-  // Append +PT suffix correctly
-  const displayTier = member.hasPersonalTraining ? `${member.tier}+PT` : member.tier;
+  // Validation: Amount entered must not exceed balance
+  const enteredAmount = parseFloat(settleAmount) || 0;
+  const isOverpaid = enteredAmount > balance;
 
   const handleSettlePayment = () => {
     if (!onUpdateMember) return;
-    const amount = parseFloat(settleAmount);
-    if (isNaN(amount) || amount <= 0) return;
+    if (isNaN(enteredAmount) || enteredAmount <= 0 || isOverpaid) return;
 
     setIsSettling(true);
     const updatedMember: Member = {
       ...member,
-      amountPaid: paid + amount
+      amountPaid: Math.round((paid + enteredAmount) * 100) / 100
     };
     
     onUpdateMember(updatedMember);
@@ -71,7 +71,7 @@ const MemberProfileView: React.FC<MemberProfileViewProps> = ({ member, attendanc
     addRow("Receipt Date:", new Date().toLocaleDateString());
     addRow("Athlete ID:", member.id);
     addRow("Name:", member.name);
-    addRow("Tier:", `${displayTier} (${member.membershipDuration}M)`);
+    addRow("Tier:", `${member.hasPersonalTraining ? member.tier + '+PT' : member.tier} (${member.membershipDuration}M)`);
     addRow("Total Package:", `INR ${total.toLocaleString()}`);
     addRow("Amount Paid So Far:", `INR ${paid.toLocaleString()}`);
     addRow("Remaining Balance:", `INR ${balance.toLocaleString()}`);
@@ -122,23 +122,11 @@ const MemberProfileView: React.FC<MemberProfileViewProps> = ({ member, attendanc
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const hasPhoto = member.photo && !member.photo.startsWith('data:image/svg+xml');
-  
-  const getThemeColors = () => {
-    switch(member.tier) {
-      case MembershipTier.PREMIUM:
-        return { badge: 'bg-amber-500 text-slate-900', border: 'border-amber-500/50', tagBg: 'bg-amber-500/10', tagText: 'text-amber-500' };
-      case MembershipTier.STANDARD:
-        return { badge: 'bg-blue-500 text-white', border: 'border-blue-500/50', tagBg: 'bg-blue-500/10', tagText: 'text-blue-500' };
-      default:
-        return { badge: 'bg-slate-700 text-white', border: 'border-slate-700/50', tagBg: 'bg-slate-700/10', tagText: 'text-slate-400' };
-    }
-  };
-
-  const theme = getThemeColors();
+  const displayTier = member.hasPersonalTraining ? `${member.tier}+PT` : member.tier;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 bg-slate-950/98 backdrop-blur-xl animate-in fade-in duration-300" onClick={onClose}>
-      <div className={`relative w-full max-w-[320px] bg-slate-900 border ${theme.border} rounded-[2rem] overflow-hidden shadow-2xl flex flex-col`} onClick={(e) => e.stopPropagation()}>
+      <div className="relative w-full max-w-[320px] bg-slate-900 border border-slate-800 rounded-[2rem] overflow-hidden shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
         
         <div className="h-20 bg-gradient-to-b from-slate-800 to-slate-900 flex flex-col items-center justify-center relative px-4">
           <h3 className="text-amber-500 text-[7px] font-black uppercase tracking-[0.3em]">Athlete Profile</h3>
@@ -241,7 +229,7 @@ const MemberProfileView: React.FC<MemberProfileViewProps> = ({ member, attendanc
                   {hasBalance ? (
                     <div className="bg-white rounded-2xl p-4 space-y-3 shadow-xl">
                       <div className="flex justify-between items-center">
-                        <p className="text-[8px] font-black text-slate-400 uppercase">Process</p>
+                        <p className="text-[8px] font-black text-slate-400 uppercase">Process Settlement</p>
                         <span className="text-[10px] font-black text-red-500">DUE ₹{balance}</span>
                       </div>
                       <div className="relative">
@@ -251,13 +239,20 @@ const MemberProfileView: React.FC<MemberProfileViewProps> = ({ member, attendanc
                           placeholder="Amount..." 
                           value={settleAmount}
                           onChange={(e) => setSettleAmount(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-6 pr-3 py-2 text-slate-900 font-black outline-none focus:ring-1 focus:ring-amber-500 text-sm"
+                          className={`w-full bg-slate-50 border ${isOverpaid ? 'border-red-500 focus:ring-red-500' : 'border-slate-200 focus:ring-amber-500'} rounded-lg pl-6 pr-3 py-2 text-slate-900 font-black outline-none text-sm transition-all`}
                         />
                       </div>
+                      
+                      {isOverpaid && (
+                        <p className="text-[8px] font-black text-red-500 uppercase text-center animate-pulse">
+                          Error: Amount exceeds the pending balance of ₹{balance}
+                        </p>
+                      )}
+
                       <button 
                         onClick={handleSettlePayment}
-                        disabled={isSettling || !settleAmount}
-                        className="w-full py-2.5 bg-slate-900 text-white rounded-lg font-black text-[9px] uppercase tracking-widest hover:bg-slate-800 transition active:scale-95 disabled:opacity-50"
+                        disabled={isSettling || !settleAmount || enteredAmount <= 0 || isOverpaid}
+                        className="w-full py-2.5 bg-slate-900 text-white rounded-lg font-black text-[9px] uppercase tracking-widest hover:bg-slate-800 transition active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         Settle Payment
                       </button>

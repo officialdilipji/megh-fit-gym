@@ -14,22 +14,6 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, currentPhoto }
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
 
-  const startCamera = useCallback(async () => {
-    try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'user', width: 400, height: 400 } 
-      });
-      setStream(mediaStream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-      }
-      setIsCameraActive(true);
-    } catch (err) {
-      console.error("Error accessing camera:", err);
-      alert("Please allow camera access to take a photo.");
-    }
-  }, []);
-
   const stopCamera = useCallback(() => {
     if (stream) {
       stream.getTracks().forEach(track => track.stop());
@@ -38,14 +22,69 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, currentPhoto }
     setIsCameraActive(false);
   }, [stream]);
 
+  const startCamera = useCallback(async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert("Your browser does not support camera access. Please use a modern browser like Chrome or Safari.");
+      return;
+    }
+
+    try {
+      // Using ideal values and aspectRatio for better mobile compatibility
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'user', 
+          width: { ideal: 640 },
+          height: { ideal: 640 },
+          aspectRatio: { ideal: 1 }
+        },
+        audio: false
+      });
+      
+      setStream(mediaStream);
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+        // Explicitly play for mobile browsers
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.error("Video play error:", playErr);
+        }
+      }
+      setIsCameraActive(true);
+    } catch (err: any) {
+      console.error("Error accessing camera:", err);
+      if (err.name === 'NotAllowedError') {
+        alert("Camera permission denied. Please enable camera access in your device settings and refresh.");
+      } else if (err.name === 'NotFoundError') {
+        alert("No camera found on this device.");
+      } else {
+        alert("Could not start camera. Please try uploading a photo instead.");
+      }
+    }
+  }, []);
+
   const capturePhoto = useCallback(() => {
     if (videoRef.current && canvasRef.current) {
       const context = canvasRef.current.getContext('2d');
       if (context) {
-        canvasRef.current.width = videoRef.current.videoWidth;
-        canvasRef.current.height = videoRef.current.videoHeight;
-        context.drawImage(videoRef.current, 0, 0);
-        const dataUrl = canvasRef.current.toDataURL('image/jpeg', 0.8);
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+        
+        // Match canvas to actual video stream dimensions
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        
+        // Mirror the capture if using front camera
+        context.translate(canvas.width, 0);
+        context.scale(-1, 1);
+        
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        // Reset transformation for data extraction
+        context.setTransform(1, 0, 0, 1, 0, 0);
+        
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
         onCapture(dataUrl);
         stopCamera();
       }
@@ -83,6 +122,7 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, currentPhoto }
             ref={videoRef} 
             autoPlay 
             playsInline 
+            muted
             className="w-full h-full object-cover scale-x-[-1]"
           />
         ) : currentPhoto ? (
@@ -94,7 +134,6 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, currentPhoto }
           </div>
         )}
         
-        {/* Overlay when photo exists */}
         {currentPhoto && !isCameraActive && (
           <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
             <p className="text-[10px] font-black text-amber-500 uppercase tracking-tighter">Change Photo</p>

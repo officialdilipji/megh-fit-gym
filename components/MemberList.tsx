@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { Member, SortOrder, MemberStatus, MembershipTier, TierSettings } from '../types';
+import React from 'react';
+import { Member, SortOrder, MemberStatus, MembershipTier } from '../types';
 import { TrashIcon } from './Icons';
 
 interface MemberListProps {
@@ -10,10 +10,9 @@ interface MemberListProps {
   onApprove?: (member: Member) => Promise<void>;
   searchTerm: string;
   sortOrder: SortOrder;
-  tierSettings: TierSettings;
 }
 
-const MemberList: React.FC<MemberListProps> = ({ members, onDelete, onSelect, onApprove, searchTerm, sortOrder, tierSettings }) => {
+const MemberList: React.FC<MemberListProps> = ({ members, onDelete, onSelect, onApprove, searchTerm, sortOrder }) => {
   const now = Date.now();
   
   const filteredMembers = members.filter(m => {

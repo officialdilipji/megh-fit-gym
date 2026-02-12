@@ -1,10 +1,30 @@
 
-import { Member, MemberStatus, MembershipTier, Gender, PaymentMethod, AttendanceLog, DurationMonths } from '../types';
+import { Member, MemberStatus, MembershipTier, Gender, PaymentMethod, AttendanceLog, DurationMonths, PricingConfig } from '../types';
 
 /**
  * MANDATORY: Verify this URL matches your current Apps Script deployment URL.
  */
 const GOOGLE_SCRIPT_URL: string = 'https://script.google.com/macros/s/AKfycbx0JavHlD_J3CxjQ2pqhqY3ao_rd6y_zRO4XxtRU4cysVEhOJC62wGnIna5lgdcNrv6/exec'; 
+
+// Utility to ensure dates are compared as YYYY-MM-DD regardless of source format
+export const normalizeDateStr = (dateStr: string): string => {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) {
+      // Handle DD/MM/YYYY manually if Date fails
+      const parts = dateStr.split(/[/.-]/);
+      if (parts.length === 3) {
+        if (parts[0].length === 4) return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      }
+      return dateStr.trim();
+    }
+    return d.toISOString().split('T')[0];
+  } catch {
+    return dateStr.trim();
+  }
+};
 
 const getVal = (row: any, searchKeys: string[]) => {
   const rowKeys = Object.keys(row);
@@ -32,20 +52,47 @@ const parseNum = (val: any): number => {
   return isNaN(num) ? 0 : num;
 };
 
-export const syncMemberToSheet = async (member: Member): Promise<boolean> => {
+export const syncConfigToSheet = async (config: { upiId: string, membershipPrices: PricingConfig, ptPrices: PricingConfig }): Promise<boolean> => {
   if (!GOOGLE_SCRIPT_URL || !GOOGLE_SCRIPT_URL.includes('/exec')) return false;
-  
   try {
     await fetch(GOOGLE_SCRIPT_URL, {
       method: 'POST',
       mode: 'no-cors',
       cache: 'no-cache',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
-        ...member, 
-        sheetType: 'member', 
+        ...config, 
+        sheetType: 'config', 
         action: 'update' 
       }),
+    });
+    return true; 
+  } catch (error) {
+    console.error("Config Sync Error:", error);
+    return false;
+  }
+};
+
+export const fetchConfigFromSheet = async (): Promise<{ upiId?: string, membershipPrices?: PricingConfig, ptPrices?: PricingConfig } | null> => {
+  if (!GOOGLE_SCRIPT_URL || !GOOGLE_SCRIPT_URL.includes('/exec')) return null;
+  try {
+    const url = `${GOOGLE_SCRIPT_URL}?type=config&_t=${Date.now()}`;
+    const response = await fetch(url, { method: 'GET', mode: 'cors', redirect: 'follow' });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (error) {
+    console.error("Fetch Config Error:", error);
+    return null;
+  }
+};
+
+export const syncMemberToSheet = async (member: Member): Promise<boolean> => {
+  if (!GOOGLE_SCRIPT_URL || !GOOGLE_SCRIPT_URL.includes('/exec')) return false;
+  try {
+    await fetch(GOOGLE_SCRIPT_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      cache: 'no-cache',
+      body: JSON.stringify({ ...member, sheetType: 'member', action: 'update' }),
     });
     return true; 
   } catch (error) {
@@ -61,7 +108,6 @@ export const deleteMemberFromSheet = async (memberId: string): Promise<boolean> 
       method: 'POST',
       mode: 'no-cors',
       cache: 'no-cache',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: memberId, sheetType: 'member', action: 'delete' }),
     });
     return true;
@@ -89,30 +135,18 @@ export const syncAttendanceToSheet = async (log: AttendanceLog): Promise<boolean
 
 export const fetchMembersFromSheet = async (): Promise<Member[]> => {
   if (!GOOGLE_SCRIPT_URL || !GOOGLE_SCRIPT_URL.includes('/exec')) return [];
-  
   try {
     const url = `${GOOGLE_SCRIPT_URL}?type=members&_t=${Date.now()}`;
-    const response = await fetch(url, {
-      method: 'GET',
-      mode: 'cors',
-      redirect: 'follow'
-    });
-    
+    const response = await fetch(url, { method: 'GET', mode: 'cors', redirect: 'follow' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    
     const data = await response.json();
     if (!Array.isArray(data)) return [];
-
     return data.map((row: any): Member => {
       const ts = parseNum(getVal(row, ["timestamp"]));
       const expTs = parseNum(getVal(row, ["expiryTimestamp"]));
-      
       const paid = parseNum(getVal(row, ["amountPaid", "AmountPaid", "Amount Paid"]));
       const due = parseNum(getVal(row, ["dueAmount", "DueAmount", "Due Amount", "balance"]));
-      
-      // Reconstruction logic: totalPayable = amountPaid + dueAmount
       const total = paid + due;
-      
       return {
         id: String(getVal(row, ["id"])),
         name: String(getVal(row, ["name"])),
@@ -151,14 +185,9 @@ export const fetchAttendanceLogs = async (): Promise<AttendanceLog[]> => {
   if (!GOOGLE_SCRIPT_URL || !GOOGLE_SCRIPT_URL.includes('/exec')) return [];
   try {
     const url = `${GOOGLE_SCRIPT_URL}?type=attendance&_t=${Date.now()}`;
-    const response = await fetch(url, { 
-      method: 'GET', 
-      mode: 'cors', 
-      redirect: 'follow' 
-    });
+    const response = await fetch(url, { method: 'GET', mode: 'cors', redirect: 'follow' });
     const data = await response.json();
     if (!Array.isArray(data)) return [];
-    
     return data.map((row: any) => ({
       memberId: String(getVal(row, ["memberId"])),
       checkIn: String(getVal(row, ["checkIn"])),
