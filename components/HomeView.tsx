@@ -58,11 +58,10 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
   );
 
   const getLatestTodayLog = (memberId: string) => {
-    const memberLogs = attendance.filter(a => a.memberId === memberId);
-    const todayLogs = memberLogs.filter(a => normalizeDate(a.date) === todayIso);
+    const todayLogs = attendance.filter(a => 
+      a.memberId === memberId && normalizeDate(a.date) === todayIso
+    );
     if (todayLogs.length === 0) return null;
-    
-    // Sort by check-in time descending
     return todayLogs.sort((a, b) => b.checkIn.localeCompare(a.checkIn))[0];
   };
 
@@ -120,7 +119,7 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
             </h1>
             <p className="text-[8px] md:text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1.5 flex items-center gap-2">
                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-               Terminal Active • {todayIso}
+               Terminal Active • Syncing High-Freq
             </p>
           </div>
           <div className="flex items-center gap-2 md:hidden">
@@ -131,8 +130,8 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
         </div>
         
         <div className="flex items-center gap-2 w-full md:w-auto">
-          <button onClick={() => setShowJoinModal(true)} className="flex-1 md:flex-none flex items-center justify-center gap-2.5 bg-amber-500/10 border border-amber-500/20 px-4 py-3 rounded-xl transition-all">
-            <span className="text-[9px] font-black uppercase text-amber-500 tracking-widest">Entry QR</span>
+          <button onClick={() => setShowJoinModal(true)} className="flex-1 md:flex-none flex items-center justify-center gap-2.5 bg-amber-500/10 border border-amber-500/20 px-4 py-3 rounded-xl transition-all hover:bg-amber-500/20">
+            <span className="text-[9px] font-black uppercase text-amber-500 tracking-widest">Enrollment QR</span>
             <div className="p-1 bg-white rounded-md shadow-lg">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0f172a" strokeWidth="3"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
             </div>
@@ -150,20 +149,21 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
 
       <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-8 flex flex-col lg:flex-row gap-6">
         <aside className="lg:w-80 space-y-4">
-          <div className="bg-slate-900 border border-slate-800 p-5 rounded-[2rem] shadow-xl">
+          <div className="bg-slate-900 border border-slate-800 p-5 rounded-[2.5rem] shadow-xl">
             <div className="grid grid-cols-2 lg:grid-cols-1 gap-3 mb-6">
-               <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 flex flex-col">
+               <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 flex flex-col relative overflow-hidden">
                   <span className="text-[7px] font-black text-slate-600 uppercase mb-1">Live In Floor</span>
-                  <span className="text-2xl font-black text-emerald-500 tabular-nums">{liveNowCount}</span>
+                  <span className="text-2xl font-black text-emerald-500 tabular-nums relative z-10">{liveNowCount}</span>
+                  {liveNowCount > 0 && <div className="absolute inset-0 bg-emerald-500/5 animate-pulse"></div>}
                </div>
                <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 flex flex-col">
-                  <span className="text-[7px] font-black text-slate-600 uppercase mb-1">Total Daily Visits</span>
+                  <span className="text-[7px] font-black text-slate-600 uppercase mb-1">Daily Traffic</span>
                   <span className="text-2xl font-black text-amber-500 tabular-nums">{totalVisitsToday}</span>
                </div>
             </div>
             <div className="space-y-2">
-               <button onClick={() => onNavigate('client')} className="w-full py-4 bg-amber-500 text-slate-950 rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-amber-500/10 transition-all">Manual Admission</button>
-               <button onClick={() => onNavigate('admin')} className="w-full py-4 bg-slate-800 text-white rounded-xl font-black uppercase tracking-widest text-[10px] border border-slate-700 transition-all">Registry Console</button>
+               <button onClick={() => onNavigate('client')} className="w-full py-4 bg-amber-500 text-slate-950 rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-amber-500/10 transition-all hover:bg-amber-400 active:scale-95">Front Desk Enrollment</button>
+               <button onClick={() => onNavigate('admin')} className="w-full py-4 bg-slate-800 text-white rounded-xl font-black uppercase tracking-widest text-[10px] border border-slate-700 transition-all hover:bg-slate-700">Registry Console</button>
             </div>
           </div>
         </aside>
@@ -171,9 +171,9 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
         <section className="flex-1">
           <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col min-h-[500px]">
             <div className="p-5 md:p-8 border-b border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-900/50">
-               <h2 className="text-lg md:text-xl font-black text-white uppercase tracking-tighter italic">Attendance Terminal</h2>
+               <h2 className="text-lg md:text-xl font-black text-white uppercase tracking-tighter italic">Live Monitor</h2>
                <div className="relative w-full sm:w-72">
-                 <input type="text" placeholder="Search athlete..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="bg-slate-950 border border-slate-800 rounded-xl px-5 py-3.5 text-xs text-white outline-none w-full focus:ring-1 focus:ring-amber-500 transition-all shadow-inner" />
+                 <input type="text" placeholder="Filter active athletes..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="bg-slate-950 border border-slate-800 rounded-xl px-5 py-3.5 text-xs text-white outline-none w-full focus:ring-1 focus:ring-amber-500 transition-all shadow-inner" />
                </div>
             </div>
 
@@ -187,14 +187,14 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
                   const isPending = member.status === MemberStatus.PENDING;
 
                   return (
-                    <div key={member.id} className={`p-4 md:p-6 rounded-[2rem] border transition-all ${isSessionOpen ? 'bg-emerald-500/[0.04] border-emerald-500/30 shadow-[0_0_20px_rgba(16,185,129,0.05)]' : 'bg-slate-950/50 border-slate-800'}`}>
+                    <div key={member.id} className={`p-4 md:p-6 rounded-[2rem] border transition-all duration-500 ${isSessionOpen ? 'bg-emerald-500/[0.04] border-emerald-500/40 shadow-xl' : 'bg-slate-950/50 border-slate-800'}`}>
                        <div className="flex justify-between items-start mb-5">
                          <div className="flex items-center gap-3">
-                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black text-lg border-2 ${isExpired ? 'bg-red-500/10 border-red-500/30 text-red-500' : isSessionOpen ? 'bg-emerald-500 border-emerald-400 text-slate-950 shadow-lg' : 'bg-slate-800 border-slate-700 text-white'}`}>{member.name.charAt(0)}</div>
+                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black text-lg border-2 transition-all ${isExpired ? 'bg-red-500/10 border-red-500/30 text-red-500' : isSessionOpen ? 'bg-emerald-500 border-emerald-400 text-slate-950 shadow-lg' : 'bg-slate-800 border-slate-700 text-white'}`}>{member.name.charAt(0)}</div>
                             <div className="min-w-0">
                                <p className="text-[13px] font-black text-white uppercase tracking-tight truncate max-w-[120px]">{member.name}</p>
                                <div className="flex items-center gap-1.5 mt-0.5">
-                                 <div className={`w-1.5 h-1.5 rounded-full ${isSessionOpen ? 'bg-emerald-500 animate-pulse' : isPending ? 'bg-amber-500' : sessionFinished ? 'bg-slate-500' : 'bg-slate-800'}`}></div>
+                                 <div className={`w-1.5 h-1.5 rounded-full ${isSessionOpen ? 'bg-emerald-500 animate-ping' : isPending ? 'bg-amber-500' : sessionFinished ? 'bg-slate-500' : 'bg-slate-800'}`}></div>
                                  <span className="text-[7px] text-slate-500 font-black uppercase tracking-widest truncate">
                                     {isPending ? 'Unapproved' : isSessionOpen ? 'In Floor' : sessionFinished ? 'Done Today' : 'Ready'}
                                  </span>
@@ -205,14 +205,14 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
 
                        <div className="space-y-3">
                           {log && (
-                            <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 flex justify-between items-center animate-in fade-in">
+                            <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 flex justify-between items-center animate-in fade-in slide-in-from-bottom-2">
                                <div className="text-center">
-                                 <p className="text-[6px] text-slate-500 uppercase font-black mb-0.5">Log In</p>
+                                 <p className="text-[6px] text-slate-500 uppercase font-black mb-0.5">In</p>
                                  <p className="text-[10px] text-white font-mono font-black">{formatDisplayTime(log.checkIn)}</p>
                                </div>
                                <div className="w-px h-6 bg-slate-800"></div>
                                <div className="text-center">
-                                 <p className="text-[6px] text-amber-500 uppercase font-black mb-0.5">Log Out</p>
+                                 <p className="text-[6px] text-amber-500 uppercase font-black mb-0.5">Out</p>
                                  <p className={`text-[10px] font-mono font-black ${log.checkOut ? 'text-amber-500' : 'text-slate-700'}`}>
                                     {log.checkOut ? formatDisplayTime(log.checkOut) : '--:--'}
                                  </p>
@@ -234,11 +234,11 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
                                       : 'bg-amber-500 text-slate-950 shadow-amber-500/10'
                               }`}
                             >
-                              {isPending ? 'Need Approval' : sessionFinished ? 'Session Finished' : 'Check In'}
+                              {isPending ? 'Pending Desk Approval' : sessionFinished ? 'Visit Logged' : 'Check In'}
                             </button>
                           ) : (
                             <button onClick={() => handleAction(member.id, 'out')} className="w-full py-4.5 bg-white text-slate-950 rounded-xl font-black text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all">
-                               Log Out Athlete
+                               Finalize Logout
                             </button>
                           )}
                        </div>
@@ -251,6 +251,7 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
         </section>
       </main>
 
+      {/* Override and Join Modals maintained with improved high-impact UI */}
       {showOverrideModal && (
         <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-slate-950/98 backdrop-blur-xl">
           <div className="bg-slate-900 border border-slate-800 rounded-[3rem] p-10 max-w-sm w-full shadow-2xl text-center">
@@ -258,12 +259,12 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
                 <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="3"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
              </div>
              <h3 className="text-xl font-black text-white uppercase tracking-tighter mb-4 italic">Security Override</h3>
-             <p className="text-slate-500 text-[10px] font-bold leading-relaxed mb-8 uppercase tracking-widest">A session was already completed for today. Authorize re-entry?</p>
+             <p className="text-slate-500 text-[10px] font-bold leading-relaxed mb-8 uppercase tracking-widest">Athlete has already visited today. Re-authorize entry?</p>
              <form onSubmit={handleOverrideSubmit} className="space-y-4">
-                <input type="password" autoFocus placeholder="Admin Password" value={overridePassword} onChange={(e) => setOverridePassword(e.target.value)} className={`w-full bg-slate-950 border ${overrideError ? 'border-red-500' : 'border-slate-800'} rounded-2xl px-6 py-5 text-center text-white focus:ring-1 focus:ring-amber-500 outline-none font-mono`} />
+                <input type="password" autoFocus placeholder="Master Admin Key" value={overridePassword} onChange={(e) => setOverridePassword(e.target.value)} className={`w-full bg-slate-950 border ${overrideError ? 'border-red-500' : 'border-slate-800'} rounded-2xl px-6 py-5 text-center text-white focus:ring-1 focus:ring-amber-500 outline-none font-mono`} />
                 <div className="flex gap-4">
-                   <button type="button" onClick={() => setShowOverrideModal(null)} className="flex-1 py-5 bg-slate-800 text-slate-500 rounded-2xl font-black uppercase text-[10px]">Back</button>
-                   <button type="submit" className="flex-[2] py-5 bg-amber-500 text-slate-950 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-amber-500/10">Authorize</button>
+                   <button type="button" onClick={() => setShowOverrideModal(null)} className="flex-1 py-5 bg-slate-800 text-slate-400 rounded-2xl font-black uppercase text-[10px]">Decline</button>
+                   <button type="submit" className="flex-[2] py-5 bg-amber-500 text-slate-950 rounded-2xl font-black uppercase text-[10px] tracking-widest">Confirm Access</button>
                 </div>
              </form>
           </div>
@@ -273,12 +274,12 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
       {showJoinModal && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/98 backdrop-blur-xl" onClick={() => setShowJoinModal(false)}>
           <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] p-8 max-w-xs w-full shadow-2xl text-center relative" onClick={e => e.stopPropagation()}>
-             <h3 className="text-xl font-black text-white uppercase tracking-tighter mb-6 italic">Athlete Entry</h3>
+             <h3 className="text-xl font-black text-white uppercase tracking-tighter mb-6 italic">Enrollment Portal</h3>
              <div className="bg-white p-5 rounded-[2rem] shadow-xl mb-6">
                <img src={joinQrUrl} alt="Join QR" className="w-full h-full aspect-square" />
              </div>
-             <p className="text-slate-400 text-[9px] font-bold mb-8 uppercase tracking-widest leading-relaxed">Scan to access personal terminal.</p>
-             <button onClick={() => setShowJoinModal(false)} className="w-full py-4 bg-slate-800 text-white rounded-xl font-black uppercase text-[10px] tracking-widest border border-slate-700">Close</button>
+             <p className="text-slate-400 text-[9px] font-bold mb-8 uppercase tracking-widest leading-relaxed">Direct athletes here for admission.</p>
+             <button onClick={() => setShowJoinModal(false)} className="w-full py-4 bg-slate-800 text-white rounded-xl font-black uppercase text-[10px] tracking-widest border border-slate-700">Dismiss</button>
           </div>
         </div>
       )}

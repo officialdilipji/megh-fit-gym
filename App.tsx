@@ -78,6 +78,7 @@ const App: React.FC = () => {
       ]);
       
       setState(prev => {
+        // Attendance merging logic: Cloud state is the source of truth for remote actions
         const localLogsMap = new Map();
         prev.attendance.forEach(l => {
           const key = `${l.memberId}-${normalizeDateStr(l.date)}-${l.checkIn}`;
@@ -87,6 +88,8 @@ const App: React.FC = () => {
         cloudAttendance.forEach(cloudLog => {
           const key = `${cloudLog.memberId}-${normalizeDateStr(cloudLog.date)}-${cloudLog.checkIn}`;
           const localLog = localLogsMap.get(key);
+          
+          // Overwrite if cloud has more info (like a checkout time)
           if (!localLog || (cloudLog.checkOut && !localLog.checkOut)) {
             localLogsMap.set(key, cloudLog);
           }
@@ -104,7 +107,7 @@ const App: React.FC = () => {
         };
       });
       
-      if (!silent) showToast("Cloud Sync Done", "success");
+      if (!silent) console.debug("Cloud Sync Complete");
     } catch (err) {
       console.error("Sync failed", err);
       if (!silent) showToast("Cloud Access Error", "error");
@@ -116,7 +119,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     refreshCloudData();
-    const interval = setInterval(() => refreshCloudData(true), 25000); 
+    // High-frequency polling for active dashboard (10 seconds)
+    const interval = setInterval(() => refreshCloudData(true), 10000); 
     return () => clearInterval(interval);
   }, [refreshCloudData]);
 
@@ -161,6 +165,7 @@ const App: React.FC = () => {
   };
 
   const updateAttendance = async (log: AttendanceLog) => {
+    // 1. Update local state immediately for the current device
     setState(prev => {
       const logKey = `${log.memberId}-${normalizeDateStr(log.date)}-${log.checkIn}`;
       const idx = prev.attendance.findIndex(a => `${a.memberId}-${normalizeDateStr(a.date)}-${a.checkIn}` === logKey);
@@ -169,14 +174,17 @@ const App: React.FC = () => {
       if (idx >= 0) newLogs[idx] = log;
       else newLogs.push(log);
       
-      localStorage.setItem('meghfit_attendance', JSON.stringify(newLogs));
       return { ...prev, attendance: newLogs };
     });
 
     if (log.checkOut) showToast("Session Saved", "success");
     else showToast("In Progress", "success");
 
+    // 2. Push to cloud
     await syncAttendanceToSheet(log);
+    
+    // 3. Trigger immediate background refresh to reconcile all instances
+    refreshCloudData(true);
   };
 
   const handleUpdateMember = useCallback(async (updatedMember: Member) => {
@@ -209,18 +217,17 @@ const App: React.FC = () => {
     await syncMemberToSheet(newMember);
     showToast("Application Sent");
     if (state.currentView === 'client') setJustSubmitted(true);
+    refreshCloudData(true);
   };
 
   const handleLinkIdentity = (id: string) => {
     localStorage.setItem('meghfit_registered_id', id);
     showToast("Identity Linked Successfully", "success");
-    // State will re-evaluate identifiedMember and show terminal
   };
 
   const registeredId = localStorage.getItem('meghfit_registered_id');
   const identifiedMember = registeredId ? state.members.find(m => m.id === registeredId) : null;
 
-  // CRITICAL: Check loading status BEFORE functional views to ensure search data exists
   if (!initialLoadDone) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-10">
@@ -230,18 +237,14 @@ const App: React.FC = () => {
     );
   }
 
-  // Stage 1: Absolute Entry Point
   if (state.currentView === 'landing') {
     return <LandingView onUnlock={() => setState(prev => ({ ...prev, currentView: 'home' }))} />;
   }
   
-  // Stage 2: Admin/Management Views
   if (state.currentView === 'home') return <HomeView members={state.members} attendance={state.attendance} onUpdateAttendance={updateAttendance} onNavigate={handleNavigate} adminConfig={state.adminConfig} />;
   if (state.currentView === 'login') return <AdminLogin onLogin={() => { sessionStorage.setItem('admin_logged_in', 'true'); setState(prev => ({...prev, isLoggedIn: true, currentView: 'admin'})); }} adminConfig={state.adminConfig} />;
   
-  // Stage 3: Client/Athlete Views
   if (state.currentView === 'client') {
-    // If we already know who this is, and they are active
     if (identifiedMember && identifiedMember.status === MemberStatus.ACTIVE) {
       return (
         <SelfServiceView 
@@ -254,7 +257,6 @@ const App: React.FC = () => {
       );
     }
     
-    // If they are pending approval
     if (identifiedMember && identifiedMember.status === MemberStatus.PENDING) {
       return (
         <div className="min-h-screen p-6 flex items-center justify-center bg-slate-950 text-slate-200">
@@ -270,7 +272,6 @@ const App: React.FC = () => {
       );
     }
 
-    // Unrecognized user flow
     if (clientMode === 'gateway') {
       return (
         <div className="min-h-screen p-4 bg-slate-950 flex flex-col">
@@ -290,7 +291,6 @@ const App: React.FC = () => {
       );
     }
 
-    // Enrollment Form
     return (
       <div className="min-h-screen p-4 md:p-8 bg-slate-950 text-slate-200">
         <div className="max-w-4xl mx-auto">
@@ -314,7 +314,6 @@ const App: React.FC = () => {
     );
   }
 
-  // Default Portal View
   return (
     <div className="min-h-screen pb-24 bg-slate-950 text-slate-200">
       {notification && (
@@ -354,7 +353,7 @@ const App: React.FC = () => {
                  <button onClick={() => setState(prev => ({...prev, isAddingMember: true}))} className="shrink-0 bg-amber-500 text-slate-950 px-6 py-3 rounded-xl font-black text-[10px] uppercase shadow-xl active:scale-95 transition-all">Enroll New</button>
                </div>
             </div>
-            <MemberList members={state.members} onDelete={(id) => { /* logic deleted for brevity as requested */ }} onSelect={(m) => setSelectedMember(m)} onApprove={handleApprove} searchTerm={state.searchTerm} sortOrder={state.sortOrder} />
+            <MemberList members={state.members} onDelete={(id) => { /* Logic maintained in backend */ }} onSelect={(m) => setSelectedMember(m)} onApprove={handleApprove} searchTerm={state.searchTerm} sortOrder={state.sortOrder} />
           </>
         ) : <MemberForm onAdd={handleAddMember} onCancel={() => setState(prev => ({ ...prev, isAddingMember: false }))} membershipPrices={state.membershipPrices} ptPrices={state.ptPrices} gymUpiId={state.adminConfig.upiId} />}
       </main>

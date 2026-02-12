@@ -31,7 +31,6 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isProcessing, setIsProcessing] = useState(false);
   
-  // Use the robust utility to get Today's standardized string
   const todayIso = useMemo(() => normalizeDateStr(getIsoDateString(currentTime)), [currentTime.getDate()]);
 
   useEffect(() => {
@@ -39,7 +38,6 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
     return () => clearInterval(timer);
   }, []);
 
-  // Find the absolute latest log for today for this specific member
   const latestLog = useMemo(() => {
     const todayLogs = attendance.filter(a => 
       a.memberId === member.id && 
@@ -47,8 +45,6 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
     );
     
     if (todayLogs.length === 0) return null;
-    
-    // Sort by check-in time descending to get the most recent one
     return todayLogs.sort((a, b) => b.checkIn.localeCompare(a.checkIn))[0];
   }, [attendance, member.id, todayIso]);
 
@@ -61,14 +57,15 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
 
     try {
       if (type === 'in') {
-        onUpdateAttendance({ memberId: member.id, checkIn: timeStr, checkOut: '', date: todayIso });
+        await onUpdateAttendance({ memberId: member.id, checkIn: timeStr, checkOut: '', date: todayIso });
       } else if (type === 'out') {
         if (latestLog && latestLog.checkIn && !latestLog.checkOut) {
-          onUpdateAttendance({ ...latestLog, checkOut: timeStr });
+          await onUpdateAttendance({ ...latestLog, checkOut: timeStr });
         }
       }
     } finally {
-      setTimeout(() => setIsProcessing(false), 1500);
+      // Small buffer to ensure user sees the success state
+      setTimeout(() => setIsProcessing(false), 1000);
     }
   };
 
@@ -86,8 +83,8 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
             Athlete <span className="text-amber-500">Terminal</span>
           </h1>
           <div className="flex items-center justify-center gap-2">
-            <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.4em]">Megh Fit Self-Service</p>
-            {isSyncing && <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping"></div>}
+            <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.4em]">Megh Fit Cloud-Sync Active</p>
+            {(isSyncing || isProcessing) && <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping"></div>}
           </div>
         </header>
 
@@ -97,7 +94,7 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
               {member.name.charAt(0)}
             </div>
             <h2 className="text-lg font-black text-white uppercase tracking-tighter mb-1">{member.name}</h2>
-            <p className="text-slate-500 text-[8px] font-black uppercase tracking-widest">ID: {member.id}</p>
+            <p className="text-slate-500 text-[8px] font-black uppercase tracking-widest">Unique ID: {member.id}</p>
           </div>
 
           <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 text-center space-y-1 mb-6 shadow-inner">
@@ -112,35 +109,34 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
           {isExpired ? (
             <div className="bg-red-500/10 border border-red-500/20 p-6 rounded-2xl text-center">
               <p className="text-red-500 font-black uppercase text-xs tracking-tighter mb-2">Access Revoked</p>
-              <p className="text-slate-400 text-[8px] uppercase tracking-widest leading-relaxed">Membership expired. Please see the desk.</p>
+              <p className="text-slate-400 text-[8px] uppercase tracking-widest leading-relaxed">Membership expired. Please see the desk for renewal.</p>
             </div>
           ) : (
             <div className="space-y-4">
-              {/* STATUS DISPLAY - Visible immediately and after refresh */}
-              {latestLog ? (
-                <div className={`border rounded-2xl p-5 flex flex-col items-center gap-3 transition-all ${sessionFinished ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-slate-950/50 border-slate-800'}`}>
+              {latestLog && (
+                <div className={`border rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-500 ${sessionFinished ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-slate-950/50 border-slate-800'}`}>
                    {sessionFinished && (
-                     <div className="flex items-center gap-2 mb-1">
+                     <div className="flex items-center gap-2 mb-1 animate-in fade-in">
                         <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-                        <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">Workout Completed</span>
+                        <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">Workout Logged Successfully</span>
                      </div>
                    )}
                    
                    <div className="flex justify-between items-center w-full">
                      <div className="text-center flex-1">
-                        <p className="text-[7px] text-slate-500 font-black uppercase mb-1">Checked In</p>
+                        <p className="text-[7px] text-slate-500 font-black uppercase mb-1">Check In</p>
                         <p className="text-xs font-black text-white font-mono">{formatDisplayTime(latestLog.checkIn)}</p>
                      </div>
                      <div className="w-px h-8 bg-slate-800 mx-2"></div>
                      <div className="text-center flex-1">
-                        <p className="text-[7px] text-amber-500 font-black uppercase mb-1">Checked Out</p>
-                        <p className="text-xs font-black text-amber-500 font-mono">
+                        <p className="text-[7px] text-amber-500 font-black uppercase mb-1">Check Out</p>
+                        <p className={`text-xs font-black text-amber-500 font-mono ${!latestLog.checkOut ? 'opacity-20' : ''}`}>
                           {latestLog.checkOut ? formatDisplayTime(latestLog.checkOut) : '--:--'}
                         </p>
                      </div>
                    </div>
                 </div>
-              ) : null}
+              )}
 
               {isSessionOpen ? (
                 <button 
@@ -148,13 +144,13 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
                   onClick={() => handleAction('out')}
                   className="w-full py-5 bg-white text-slate-950 rounded-2xl font-black uppercase tracking-[0.2em] text-[10px] shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
                 >
-                  {isProcessing ? 'Syncing...' : 'Log Out Athlete'}
+                  {isProcessing ? 'Syncing Terminal...' : 'Finalize Session'}
                   {!isProcessing && <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>}
                 </button>
               ) : sessionFinished ? (
-                <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl text-center">
-                   <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Daily session finalized.</p>
-                   <p className="text-[7px] text-slate-600 uppercase mt-1">See you tomorrow, Athlete!</p>
+                <div className="bg-slate-950 border border-slate-800 p-5 rounded-2xl text-center animate-in zoom-in duration-300">
+                   <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Session Closed • Synced to Desk</p>
+                   <p className="text-[7px] text-slate-600 uppercase mt-1 italic">Great work today, {member.name.split(' ')[0]}!</p>
                 </div>
               ) : (
                 <button 
@@ -162,7 +158,7 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
                   onClick={() => handleAction('in')}
                   className="w-full py-5 bg-amber-500 text-slate-950 rounded-2xl font-black uppercase tracking-[0.2em] text-[10px] shadow-xl shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
                 >
-                  {isProcessing ? 'Validating...' : 'Log In Athlete'}
+                  {isProcessing ? 'Handshaking Cloud...' : 'Begin Session'}
                   {!isProcessing && <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="9 18 15 12 9 6"></polyline></svg>}
                 </button>
               )}
@@ -171,9 +167,9 @@ const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, o
         </div>
 
         <div className="text-center pt-2">
-          <p className="text-[8px] text-slate-600 font-black uppercase tracking-widest mb-4 italic">Device Linked to: {member.id}</p>
+          <p className="text-[8px] text-slate-600 font-black uppercase tracking-widest mb-4 italic">Identity Secured: {member.id}</p>
           <button onClick={onLogoutIdentity} className="text-amber-500/30 hover:text-amber-500 transition text-[8px] font-black uppercase tracking-widest underline underline-offset-4">
-            Reset Phone Link
+            Relink to Different Profile
           </button>
         </div>
       </div>
