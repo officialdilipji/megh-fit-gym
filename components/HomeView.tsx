@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Member, AttendanceLog, MemberStatus, AdminConfig } from '../types';
-import { normalizeDateStr, getISTNow, formatISTTime, formatISTDate } from '../services/googleSheetService';
+import { normalizeDateStr, normalizeTimeStr, getISTNow, formatISTTime, formatISTDate } from '../services/googleSheetService';
 
 interface HomeViewProps {
   members: Member[];
@@ -13,11 +13,17 @@ interface HomeViewProps {
 
 const displayTime = (time24: string) => {
   if (!time24) return '';
-  const [h24, m] = time24.split(':');
-  let hNum = parseInt(h24);
-  const p = hNum >= 12 ? 'PM' : 'AM';
-  const h12 = (hNum % 12 || 12).toString().padStart(2, '0');
-  return `${h12}:${m} ${p}`;
+  try {
+    const norm = normalizeTimeStr(time24);
+    const [h24, m] = norm.split(':');
+    let hNum = parseInt(h24);
+    if (isNaN(hNum)) return time24;
+    const p = hNum >= 12 ? 'PM' : 'AM';
+    const h12 = (hNum % 12 || 12).toString().padStart(2, '0');
+    return `${h12}:${m} ${p}`;
+  } catch {
+    return time24;
+  }
 };
 
 const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttendance, onNavigate, adminConfig }) => {
@@ -264,7 +270,7 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
         </div>
       )}
 
-      {/* FIXED QR MODAL: Enrollment Gateway */}
+      {/* Enrollment Gateway Modal */}
       {showJoinModal && (
         <div className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-slate-950/95 backdrop-blur-2xl" onClick={() => setShowJoinModal(false)}>
           <div className="bg-slate-900 border border-slate-800 rounded-[3rem] p-8 max-w-xs w-full shadow-2xl text-center relative animate-in zoom-in-95 duration-300" onClick={e => e.stopPropagation()}>
@@ -277,14 +283,6 @@ const HomeView: React.FC<HomeViewProps> = ({ members, attendance, onUpdateAttend
                  src={joinQrUrl} 
                  alt="Scan for Admission" 
                  className="w-full aspect-square object-contain"
-                 onError={(e) => {
-                   const target = e.target as HTMLImageElement;
-                   target.style.display = 'none';
-                   const parent = target.parentElement;
-                   if (parent) {
-                     parent.innerHTML = '<div class="text-[10px] font-black text-slate-900 uppercase p-4">QR Generation Failed. Please Check Connectivity.</div>';
-                   }
-                 }}
                />
              </div>
              <p className="text-slate-500 text-[9px] font-black mb-4 uppercase tracking-[0.2em] leading-relaxed italic">Direct athletes to scan this for new admission or check-in.</p>

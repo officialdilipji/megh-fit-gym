@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Member, AttendanceLog, MemberStatus } from '../types';
-import { normalizeDateStr, getISTNow, formatISTTime, formatISTDate } from '../services/googleSheetService';
+import { normalizeDateStr, normalizeTimeStr, getISTNow, formatISTTime, formatISTDate } from '../services/googleSheetService';
 
 interface SelfServiceViewProps {
   member: Member;
@@ -13,11 +13,17 @@ interface SelfServiceViewProps {
 
 const displayTime = (time24: string) => {
   if (!time24) return '';
-  const [h24, m] = time24.split(':');
-  let hNum = parseInt(h24);
-  const p = hNum >= 12 ? 'PM' : 'AM';
-  const h12 = (hNum % 12 || 12).toString().padStart(2, '0');
-  return `${h12}:${m} ${p}`;
+  try {
+    const norm = normalizeTimeStr(time24);
+    const [h24, m] = norm.split(':');
+    let hNum = parseInt(h24);
+    if (isNaN(hNum)) return time24;
+    const p = hNum >= 12 ? 'PM' : 'AM';
+    const h12 = (hNum % 12 || 12).toString().padStart(2, '0');
+    return `${h12}:${m} ${p}`;
+  } catch {
+    return time24;
+  }
 };
 
 const SelfServiceView: React.FC<SelfServiceViewProps> = ({ member, attendance, onUpdateAttendance, onLogoutIdentity, isSyncing }) => {

@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { Member, MemberStatus, MembershipTier, AttendanceLog } from '../types';
+import { normalizeTimeStr } from '../services/googleSheetService';
 import { jsPDF } from 'jspdf';
 
 interface MemberProfileViewProps {
@@ -9,6 +10,21 @@ interface MemberProfileViewProps {
   onClose: () => void;
   onUpdateMember?: (updatedMember: Member) => void;
 }
+
+const displayTime = (time24: string) => {
+  if (!time24) return '';
+  try {
+    const norm = normalizeTimeStr(time24);
+    const [h24, m] = norm.split(':');
+    let hNum = parseInt(h24);
+    if (isNaN(hNum)) return time24;
+    const p = hNum >= 12 ? 'PM' : 'AM';
+    const h12 = (hNum % 12 || 12).toString().padStart(2, '0');
+    return `${h12}:${m} ${p}`;
+  } catch {
+    return time24;
+  }
+};
 
 const MemberProfileView: React.FC<MemberProfileViewProps> = ({ member, attendance, onClose, onUpdateMember }) => {
   const [activeTab, setActiveTab] = useState<'pass' | 'history' | 'payment'>('pass');
@@ -109,8 +125,8 @@ const MemberProfileView: React.FC<MemberProfileViewProps> = ({ member, attendanc
         y = 20;
       }
       doc.text(log.date, 25, y);
-      doc.text(log.checkIn, 85, y);
-      doc.text(log.checkOut || "--:--", 145, y);
+      doc.text(displayTime(log.checkIn), 85, y);
+      doc.text(displayTime(log.checkOut) || "--:--", 145, y);
       y += 10;
     });
 
@@ -197,11 +213,11 @@ const MemberProfileView: React.FC<MemberProfileViewProps> = ({ member, attendanc
                      <div className="text-right flex items-center gap-3">
                        <div className="flex flex-col">
                          <span className="text-[6px] text-slate-500 font-bold uppercase">In</span>
-                         <span className="text-[9px] text-emerald-500 font-mono font-black">{log.checkIn}</span>
+                         <span className="text-[9px] text-emerald-500 font-mono font-black">{displayTime(log.checkIn)}</span>
                        </div>
                        <div className="flex flex-col">
                          <span className="text-[6px] text-slate-500 font-bold uppercase">Out</span>
-                         <span className="text-[9px] text-amber-500 font-mono font-black">{log.checkOut || '--:--'}</span>
+                         <span className="text-[9px] text-amber-500 font-mono font-black">{displayTime(log.checkOut) || '--:--'}</span>
                        </div>
                      </div>
                    </div>

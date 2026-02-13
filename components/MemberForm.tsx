@@ -198,8 +198,9 @@ const MemberForm: React.FC<MemberFormProps> = ({
                <textarea value={formData.goals} onChange={e => setFormData(p => ({ ...p, goals: e.target.value }))} className={`w-full bg-slate-950 border ${errors.goals ? 'border-red-500' : 'border-slate-800'} rounded-2xl px-5 py-4 text-white text-sm min-h-[100px] outline-none shadow-inner focus:border-amber-500 transition-all`} placeholder="e.g. Muscle gain, weight loss, athletic endurance..." />
             </div>
 
-            <div className="bg-white rounded-[2.5rem] p-8 md:p-10 shadow-2xl space-y-8">
-               <div className="flex justify-between items-center border-b border-slate-100 pb-6">
+            {/* BILLING SECTION - FORCING LIGHT MODE STYLING FOR VISIBILITY */}
+            <div className="bg-white rounded-[2.5rem] p-8 md:p-10 shadow-2xl space-y-8 text-slate-900" style={{ colorScheme: 'light' }}>
+               <div className="flex justify-between items-center border-b border-slate-200 pb-6">
                   <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Enrollment Total</p>
                   <p className="text-4xl font-black text-slate-900 tracking-tighter italic">₹{totalAmount}</p>
                </div>
@@ -208,16 +209,16 @@ const MemberForm: React.FC<MemberFormProps> = ({
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest">Select Payment Method</label>
                   <div className="grid grid-cols-3 gap-3">
                     {[PaymentMethod.UPI, PaymentMethod.CASH, PaymentMethod.LATER].map(m => (
-                      <button key={m} type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: m }))} className={`py-4 rounded-2xl border-2 font-black uppercase text-[10px] tracking-widest transition-all ${formData.paymentMethod === m ? 'bg-slate-900 text-white border-slate-900 shadow-xl' : 'bg-white text-slate-400 border-slate-100 hover:border-slate-300'}`}>{m}</button>
+                      <button key={m} type="button" onClick={() => setFormData(p => ({ ...p, paymentMethod: m }))} className={`py-4 rounded-2xl border-2 font-black uppercase text-[10px] tracking-widest transition-all ${formData.paymentMethod === m ? 'bg-slate-900 text-white border-slate-900 shadow-xl' : 'bg-white text-slate-400 border-slate-200 hover:border-slate-400'}`}>{m}</button>
                     ))}
                   </div>
                   
                   <div className="pt-2 animate-in fade-in duration-300">
                     {formData.paymentMethod === PaymentMethod.UPI && (
-                      <div className="flex flex-col sm:flex-row gap-6 items-center bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                      <div className="flex flex-col sm:flex-row gap-6 items-center bg-slate-50 p-6 rounded-[2rem] border border-slate-200">
                          <div className="flex-1 w-full space-y-3">
-                            <label className="text-[9px] font-black text-slate-500 uppercase">Transaction ID / UTR</label>
-                            <input type="text" value={formData.transactionId} onChange={e => setFormData(p => ({ ...p, transactionId: e.target.value }))} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-xs font-mono outline-none shadow-sm focus:border-amber-500" placeholder="Ref Number" />
+                            <label className="text-[9px] font-black text-slate-700 uppercase">Transaction ID / UTR</label>
+                            <input type="text" value={formData.transactionId} onChange={e => setFormData(p => ({ ...p, transactionId: e.target.value }))} className="w-full bg-white border border-slate-400 rounded-xl px-4 py-3 text-xs font-mono outline-none shadow-sm focus:border-slate-900 text-slate-900 placeholder-slate-400" placeholder="Reference #" />
                          </div>
                          <div className="shrink-0 p-3 bg-white rounded-3xl shadow-xl border border-slate-100">
                             <img src={upiQrUrl} alt="UPI QR" className="w-24 h-24" />
@@ -225,23 +226,28 @@ const MemberForm: React.FC<MemberFormProps> = ({
                       </div>
                     )}
                     {formData.paymentMethod === PaymentMethod.LATER && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 bg-slate-50 p-6 rounded-[2rem] border border-slate-200">
                         <div className="space-y-2">
-                          <label className="text-[9px] font-black text-slate-500 uppercase">Initial Payment (Optional)</label>
+                          <label className="text-[10px] font-black text-slate-800 uppercase">Initial Payment (₹)</label>
                           <input 
                             type="number" 
                             value={formData.amountPaidNow} 
                             onChange={e => setFormData(p => ({ ...p, amountPaidNow: e.target.value }))} 
-                            className={`w-full bg-white border ${isOverpaidAtEnrollment ? 'border-red-500' : 'border-slate-200'} rounded-xl px-4 py-3 text-sm outline-none shadow-sm transition-all`} 
-                            placeholder="₹0" 
+                            className={`w-full bg-white border-2 ${isOverpaidAtEnrollment ? 'border-red-500' : 'border-slate-300'} rounded-xl px-4 py-3 text-sm font-black outline-none shadow-sm transition-all text-slate-900 placeholder-slate-400 focus:border-slate-900`} 
+                            placeholder="0" 
                           />
                           {isOverpaidAtEnrollment && (
-                            <p className="text-[7px] font-black text-red-500 uppercase animate-pulse">Error: Exceeds Package Total (₹{totalAmount})</p>
+                            <p className="text-[8px] font-black text-red-600 uppercase">Error: Exceeds Total</p>
                           )}
                         </div>
                         <div className="space-y-2">
-                          <label className="text-[9px] font-black text-slate-500 uppercase">Settlement Date</label>
-                          <input type="date" value={formData.paymentDueDate} onChange={e => setFormData(p => ({ ...p, paymentDueDate: e.target.value }))} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-xs outline-none shadow-sm" />
+                          <label className="text-[10px] font-black text-slate-800 uppercase">Promise Date</label>
+                          <input 
+                            type="date" 
+                            value={formData.paymentDueDate} 
+                            onChange={e => setFormData(p => ({ ...p, paymentDueDate: e.target.value }))} 
+                            className="w-full bg-white border-2 border-slate-300 rounded-xl px-4 py-3 text-xs font-black outline-none shadow-sm text-slate-900 focus:border-slate-900" 
+                          />
                         </div>
                       </div>
                     )}
