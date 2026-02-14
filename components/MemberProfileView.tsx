@@ -191,6 +191,12 @@ const MemberProfileView: React.FC<MemberProfileViewProps> = ({ member, attendanc
                     <span className="text-[7px] font-black text-slate-500 uppercase tracking-tighter">Expires On</span>
                     <span className="text-[9px] font-bold text-white">{member.expiryDate}</span>
                   </div>
+                  {member.hasPersonalTraining && member.ptExpiryDate && (
+                    <div className="flex justify-between border-b border-slate-800 pb-1.5">
+                      <span className="text-[7px] font-black text-emerald-500 uppercase tracking-tighter">PT Expires</span>
+                      <span className="text-[9px] font-bold text-emerald-500">{member.ptExpiryDate}</span>
+                    </div>
+                  )}
                </div>
                
                <button onClick={downloadReceipt} className="w-full mt-4 py-2 bg-slate-800 text-white rounded-lg font-black text-[8px] uppercase tracking-widest hover:bg-slate-700 transition">Get Payment PDF</button>
@@ -243,7 +249,7 @@ const MemberProfileView: React.FC<MemberProfileViewProps> = ({ member, attendanc
                   </div>
 
                   {hasBalance ? (
-                    <div className="bg-white rounded-2xl p-4 space-y-3 shadow-xl">
+                    <div className="bg-white rounded-2xl p-4 space-y-3 shadow-xl text-slate-900" style={{ colorScheme: 'light' }}>
                       <div className="flex justify-between items-center">
                         <p className="text-[8px] font-black text-slate-400 uppercase">Process Settlement</p>
                         <span className="text-[10px] font-black text-red-500">DUE ₹{balance}</span>
@@ -261,7 +267,7 @@ const MemberProfileView: React.FC<MemberProfileViewProps> = ({ member, attendanc
                       
                       {isOverpaid && (
                         <p className="text-[8px] font-black text-red-500 uppercase text-center animate-pulse">
-                          Error: Amount exceeds the pending balance of ₹{balance}
+                          Error: Max Settlement ₹{balance}
                         </p>
                       )}
 
@@ -270,7 +276,7 @@ const MemberProfileView: React.FC<MemberProfileViewProps> = ({ member, attendanc
                         disabled={isSettling || !settleAmount || enteredAmount <= 0 || isOverpaid}
                         className="w-full py-2.5 bg-slate-900 text-white rounded-lg font-black text-[9px] uppercase tracking-widest hover:bg-slate-800 transition active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
                       >
-                        Settle Payment
+                        {isSettling ? 'Processing...' : 'Settle Payment'}
                       </button>
                     </div>
                   ) : (

@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Member, AppState, MemberStatus, DEFAULT_MEMBERSHIP_PRICES, DEFAULT_PT_PRICES, AttendanceLog, PricingConfig } from './types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Member, AppState, MemberStatus, AppView, DEFAULT_MEMBERSHIP_PRICES, DEFAULT_PT_PRICES, AttendanceLog, PricingConfig, DurationMonths } from './types';
 import MemberForm from './components/MemberForm';
 import MemberList from './components/MemberList';
 import MemberProfileView from './components/MemberProfileView';
@@ -13,67 +13,74 @@ import ClientPortal from './components/ClientPortal';
 import IdentityRecovery from './components/IdentityRecovery';
 import { getFitnessInsights } from './services/geminiService';
 import { syncMemberToSheet, fetchMembersFromSheet, syncAttendanceToSheet, fetchAttendanceLogs, fetchConfigFromSheet, syncConfigToSheet, normalizeDateStr, normalizeTimeStr, deleteMemberFromSheet } from './services/googleSheetService';
+import { storageService } from './services/storageService';
 
 const App: React.FC = () => {
-  const [tombstones, setTombstones] = useState<Record<string, number>>(() => {
-    try {
-      const saved = localStorage.getItem('meghfit_tombstones');
-      return saved ? JSON.parse(saved) : {};
-    } catch { return {}; }
-  });
-
+  const [tombstones, setTombstones] = useState<Record<string, number>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-
-  const [state, setState] = useState<AppState>(() => {
-    const tryParse = (key: string, fallback: any) => {
-      try {
-        const item = localStorage.getItem(key);
-        return item ? JSON.parse(item) : fallback;
-      } catch (e) {
-        return fallback;
-      }
-    };
-
-    const savedMembers = tryParse('meghfit_members', []);
-    const savedAttendance = tryParse('meghfit_attendance', []);
-    const savedMembership = tryParse('meghfit_membership_prices', DEFAULT_MEMBERSHIP_PRICES);
-    const savedPT = tryParse('meghfit_pt_prices', DEFAULT_PT_PRICES);
-    const savedAdmin = tryParse('meghfit_admin_config', { username: 'admin', password: 'meghfit123', upiId: 'meghfit@upi' });
-    
-    const isLoggedIn = sessionStorage.getItem('admin_logged_in') === 'true';
-    const hash = window.location.hash;
-    
-    let initialView: 'home' | 'admin' | 'client' | 'login' | 'landing' = 'landing';
-    
-    if (hash === '#join') initialView = 'client';
-    else if (hash === '#admin') initialView = isLoggedIn ? 'admin' : 'login';
-
-    return {
-      members: savedMembers,
-      attendance: savedAttendance,
-      isAddingMember: false,
-      searchTerm: '',
-      sortOrder: 'newest',
-      currentView: initialView,
-      isLoggedIn: isLoggedIn,
-      membershipPrices: savedMembership,
-      ptPrices: savedPT,
-      adminConfig: savedAdmin
-    };
-  });
-
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [justSubmitted, setJustSubmitted] = useState(false);
   const [notification, setNotification] = useState<{message: string, type: 'success' | 'error'} | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
-  
   const [clientMode, setClientMode] = useState<'gateway' | 'enroll' | 'link'>('gateway');
+
+  const [state, setState] = useState<AppState>(() => {
+    const isLoggedIn = sessionStorage.getItem('admin_logged_in') === 'true';
+    const hash = window.location.hash;
+    let initialView: AppView = 'landing';
+    if (hash === '#join') initialView = 'client';
+    else if (hash === '#admin') initialView = isLoggedIn ? 'admin' : 'login';
+
+    return {
+      members: [],
+      attendance: [],
+      isAddingMember: false,
+      searchTerm: '',
+      sortOrder: 'newest',
+      currentView: initialView,
+      isLoggedIn: isLoggedIn,
+      membershipPrices: DEFAULT_MEMBERSHIP_PRICES,
+      ptPrices: DEFAULT_PT_PRICES,
+      adminConfig: { username: 'admin', password: 'meghfit123', upiId: 'meghfit@upi' }
+    };
+  });
 
   const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
+  }, []);
+
+  useEffect(() => {
+    const loadCache = async () => {
+      try {
+        const [cachedMembers, cachedAttendance, cachedTombstones] = await Promise.all([
+          storageService.getItem<Member[]>('meghfit_members', []),
+          storageService.getItem<AttendanceLog[]>('meghfit_attendance', []),
+          storageService.getItem<Record<string, number>>('meghfit_tombstones', {})
+        ]);
+
+        const savedMembership = JSON.parse(localStorage.getItem('meghfit_membership_prices') || 'null');
+        const savedPT = JSON.parse(localStorage.getItem('meghfit_pt_prices') || 'null');
+        const savedAdmin = JSON.parse(localStorage.getItem('meghfit_admin_config') || 'null');
+
+        setTombstones(cachedTombstones);
+        setState(prev => ({
+          ...prev,
+          members: cachedMembers,
+          attendance: cachedAttendance,
+          membershipPrices: savedMembership || prev.membershipPrices,
+          ptPrices: savedPT || prev.ptPrices,
+          adminConfig: savedAdmin || prev.adminConfig
+        }));
+      } catch (err) {
+        console.error("Storage Hydration Failed:", err);
+      } finally {
+        setInitialLoadDone(true);
+      }
+    };
+    loadCache();
   }, []);
 
   const refreshCloudData = useCallback(async (silent = false) => {
@@ -94,30 +101,18 @@ const App: React.FC = () => {
         }) : prev.members;
 
         const reconciledAttendanceMap = new Map<string, AttendanceLog>();
-        
         cloudAttendance.forEach(log => {
           const dKey = normalizeDateStr(log.date);
           const compositeKey = `${log.memberId}-${dKey}`;
-          reconciledAttendanceMap.set(compositeKey, { 
-            ...log, 
-            date: dKey, 
-            checkIn: normalizeTimeStr(log.checkIn), 
-            checkOut: normalizeTimeStr(log.checkOut) 
-          });
+          reconciledAttendanceMap.set(compositeKey, { ...log, date: dKey, checkIn: normalizeTimeStr(log.checkIn), checkOut: normalizeTimeStr(log.checkOut) });
         });
 
         prev.attendance.forEach(log => {
           const dKey = normalizeDateStr(log.date);
           const compositeKey = `${log.memberId}-${dKey}`;
           const cloudExisting = reconciledAttendanceMap.get(compositeKey);
-          
           if (!cloudExisting || (log.checkOut && !cloudExisting.checkOut)) {
-            reconciledAttendanceMap.set(compositeKey, { 
-              ...log, 
-              date: dKey, 
-              checkIn: normalizeTimeStr(log.checkIn), 
-              checkOut: normalizeTimeStr(log.checkOut) 
-            });
+            reconciledAttendanceMap.set(compositeKey, { ...log, date: dKey, checkIn: normalizeTimeStr(log.checkIn), checkOut: normalizeTimeStr(log.checkOut) });
           }
         });
 
@@ -130,58 +125,55 @@ const App: React.FC = () => {
           ptPrices: cloudConfig?.ptPrices || prev.ptPrices
         };
       });
-      
     } catch (err) {
       console.error("Critical Sync Failure:", err);
       if (!silent) showToast("Cloud Sync Error - Retrying", "error");
     } finally {
       setIsSyncing(false);
-      setInitialLoadDone(true);
     }
   }, [tombstones, showToast]);
 
   useEffect(() => {
-    refreshCloudData();
-    const interval = setInterval(() => refreshCloudData(true), 20000); 
-    return () => clearInterval(interval);
-  }, [refreshCloudData]);
+    if (initialLoadDone) {
+      refreshCloudData();
+      const interval = setInterval(() => refreshCloudData(true), 20000); 
+      return () => clearInterval(interval);
+    }
+  }, [refreshCloudData, initialLoadDone]);
 
   useEffect(() => {
-    localStorage.setItem('meghfit_members', JSON.stringify(state.members));
-    localStorage.setItem('meghfit_attendance', JSON.stringify(state.attendance));
-    localStorage.setItem('meghfit_tombstones', JSON.stringify(tombstones));
-  }, [state.members, state.attendance, tombstones]);
+    if (initialLoadDone) {
+      storageService.setItem('meghfit_members', state.members);
+      storageService.setItem('meghfit_attendance', state.attendance);
+      storageService.setItem('meghfit_tombstones', tombstones);
+      
+      try {
+        localStorage.setItem('meghfit_membership_prices', JSON.stringify(state.membershipPrices));
+        localStorage.setItem('meghfit_pt_prices', JSON.stringify(state.ptPrices));
+        localStorage.setItem('meghfit_admin_config', JSON.stringify(state.adminConfig));
+      } catch (e) {
+        console.warn("Storage warning: Quota pressure on config cache.");
+      }
+    }
+  }, [state.members, state.attendance, tombstones, state.membershipPrices, state.ptPrices, state.adminConfig, initialLoadDone]);
 
   const executeMemberDeletion = async (id: string) => {
     const targetMember = state.members.find(m => m.id === id);
     const memberName = targetMember ? targetMember.name : "Athlete";
-
     setConfirmDeleteId(null);
-
     const now = Date.now();
-    const updatedTombstones = { ...tombstones, [id]: now };
-    setTombstones(updatedTombstones);
-    localStorage.setItem('meghfit_tombstones', JSON.stringify(updatedTombstones));
-
-    setState(prev => ({
-      ...prev,
-      members: prev.members.filter(m => m.id !== id)
-    }));
-
+    setTombstones(prev => ({ ...prev, [id]: now }));
+    setState(prev => ({ ...prev, members: prev.members.filter(m => m.id !== id) }));
     showToast(`Deleting ${memberName}...`, "success");
-
     try {
       await deleteMemberFromSheet(id);
-      setTimeout(() => {
-        window.location.reload();
-      }, 1500);
+      setTimeout(() => window.location.reload(), 1500);
     } catch (err) {
-      console.error("Cloud command failed:", err);
       window.location.reload();
     }
   };
 
-  const handleNavigate = (view: 'home' | 'admin' | 'client' | 'login' | 'landing') => {
+  const handleNavigate = (view: AppView) => {
     setState(prev => {
       let loggedIn = prev.isLoggedIn;
       const isPublicView = (view === 'home' || view === 'client' || view === 'landing');
@@ -192,11 +184,6 @@ const App: React.FC = () => {
       const nextView = (view === 'admin' && !loggedIn) ? 'login' : view;
       return { ...prev, currentView: nextView, isLoggedIn: loggedIn, isAddingMember: false };
     });
-  };
-
-  const handleAdminLogout = () => {
-    sessionStorage.removeItem('admin_logged_in');
-    setState(prev => ({ ...prev, isLoggedIn: false, currentView: 'landing' }));
   };
 
   const updateAttendance = async (log: AttendanceLog) => {
@@ -217,10 +204,7 @@ const App: React.FC = () => {
   };
 
   const handleUpdateMember = useCallback(async (updatedMember: Member) => {
-    setState(prev => ({
-      ...prev,
-      members: prev.members.map(m => m.id === updatedMember.id ? updatedMember : m)
-    }));
+    setState(prev => ({ ...prev, members: prev.members.map(m => m.id === updatedMember.id ? updatedMember : m) }));
     if (selectedMember && selectedMember.id === updatedMember.id) setSelectedMember(updatedMember);
     await syncMemberToSheet(updatedMember);
   }, [selectedMember]);
@@ -236,13 +220,21 @@ const App: React.FC = () => {
     const now = new Date();
     const expiryDateObj = new Date(now);
     expiryDateObj.setMonth(now.getMonth() + member.membershipDuration);
+    
     let activatedMember: Member = { 
       ...member, 
       status: MemberStatus.ACTIVE, 
       joinDate: now.toLocaleDateString(), 
-      expiryDate: expiryDateObj.toLocaleDateString(),
-      expiryTimestamp: expiryDateObj.getTime()
+      expiryDate: expiryDateObj.toLocaleDateString(), 
+      expiryTimestamp: expiryDateObj.getTime() 
     };
+
+    if (member.hasPersonalTraining && member.ptDuration) {
+      const ptExp = new Date(now);
+      ptExp.setMonth(now.getMonth() + member.ptDuration);
+      activatedMember.ptExpiryDate = ptExp.toLocaleDateString();
+    }
+
     handleUpdateMember(activatedMember);
     showToast(`Approved: ${activatedMember.name}`);
     getFitnessInsights(activatedMember).then(insights => handleUpdateMember({ ...activatedMember, aiInsights: insights }));
@@ -266,7 +258,6 @@ const App: React.FC = () => {
   }
 
   const athleteToDelete = confirmDeleteId ? state.members.find(m => m.id === confirmDeleteId) : null;
-
   if (state.currentView === 'landing') return <LandingView onUnlock={() => setState(prev => ({ ...prev, currentView: 'home' }))} />;
   if (state.currentView === 'home') return <HomeView members={state.members} attendance={state.attendance} onUpdateAttendance={updateAttendance} onNavigate={handleNavigate} adminConfig={state.adminConfig} />;
   if (state.currentView === 'login') return <AdminLogin onLogin={() => { sessionStorage.setItem('admin_logged_in', 'true'); setState(prev => ({...prev, isLoggedIn: true, currentView: 'admin'})); }} adminConfig={state.adminConfig} />;
@@ -306,7 +297,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen pb-24 bg-slate-950 text-slate-200">
-      {/* CUSTOM CONFIRMATION MODAL */}
       {confirmDeleteId && athleteToDelete && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-slate-950/95 backdrop-blur-xl animate-in fade-in duration-300">
            <div className="w-full max-w-sm bg-slate-900 border-2 border-red-500/50 rounded-[3rem] p-10 text-center shadow-[0_0_100px_rgba(239,68,68,0.2)]">
@@ -315,26 +305,15 @@ const App: React.FC = () => {
               </div>
               <h2 className="text-2xl font-black text-white uppercase italic tracking-tighter mb-4">Confirm Deletion</h2>
               <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest leading-relaxed mb-10">
-                 Are you sure you want to delete <span className="text-white underline decoration-red-500 underline-offset-4">{athleteToDelete.name}</span>? This action is permanent.
+                 Permanent delete <span className="text-white underline decoration-red-500 underline-offset-4">{athleteToDelete.name}</span>?
               </p>
               <div className="flex flex-col gap-3">
-                 <button 
-                   onClick={() => executeMemberDeletion(confirmDeleteId)}
-                   className="w-full py-5 bg-red-600 hover:bg-red-500 text-white rounded-2xl font-black uppercase text-[11px] tracking-widest shadow-2xl active:scale-95 transition-all"
-                 >
-                   Yes, Delete Athlete
-                 </button>
-                 <button 
-                   onClick={() => setConfirmDeleteId(null)}
-                   className="w-full py-5 bg-slate-800 text-slate-400 rounded-2xl font-black uppercase text-[11px] tracking-widest hover:text-white transition-all"
-                 >
-                   Cancel
-                 </button>
+                 <button onClick={() => executeMemberDeletion(confirmDeleteId)} className="w-full py-5 bg-red-600 hover:bg-red-500 text-white rounded-2xl font-black uppercase text-[11px] tracking-widest shadow-2xl active:scale-95 transition-all">Yes, Delete Athlete</button>
+                 <button onClick={() => setConfirmDeleteId(null)} className="w-full py-5 bg-slate-800 text-slate-400 rounded-2xl font-black uppercase text-[11px] tracking-widest hover:text-white transition-all">Cancel</button>
               </div>
            </div>
         </div>
       )}
-
       {notification && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[300] px-6 py-3 rounded-full border shadow-2xl animate-in slide-in-from-top duration-500 flex items-center gap-3 ${notification.type === 'success' ? 'bg-emerald-500 border-emerald-400 text-slate-950' : 'bg-red-500 border-red-400 text-white'}`}>
            <p className="text-[10px] font-black uppercase tracking-tight italic">{notification.message}</p>
@@ -345,7 +324,7 @@ const App: React.FC = () => {
         <div className="flex items-center gap-3">
           <button onClick={() => setShowSettings(true)} className="p-2.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1Enc1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
           <button onClick={() => refreshCloudData()} className={`p-2.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition ${isSyncing ? 'animate-spin' : ''}`}><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg></button>
-          <button onClick={handleAdminLogout} className="bg-red-500 text-white px-4 py-2.5 rounded-xl font-black text-[9px] uppercase shadow-lg shadow-red-500/20 active:scale-95 transition-all">Logout</button>
+          <button onClick={() => { sessionStorage.removeItem('admin_logged_in'); handleNavigate('landing'); }} className="bg-red-500 text-white px-4 py-2.5 rounded-xl font-black text-[9px] uppercase shadow-lg shadow-red-500/20 active:scale-95 transition-all">Logout</button>
         </div>
       </header>
       <main className="max-w-7xl mx-auto px-4 md:px-8 mt-6">

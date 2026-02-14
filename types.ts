@@ -26,6 +26,8 @@ export enum MemberStatus {
 
 export type SortOrder = 'newest' | 'oldest';
 
+export type AppView = 'home' | 'admin' | 'client' | 'login' | 'landing';
+
 // Simplified pricing: just a record of months -> price
 export type PricingConfig = Record<number, number>;
 
@@ -62,7 +64,7 @@ export interface Member {
   fitnessGoals: string;
   joinDate: string;
   expiryDate: string;
-  ptExpiryDate?: string; // Fix for missing property error in sync logic
+  ptExpiryDate?: string;
   timestamp: number;
   expiryTimestamp: number;
   status: MemberStatus;
@@ -76,7 +78,7 @@ export interface AppState {
   isAddingMember: boolean;
   searchTerm: string;
   sortOrder: SortOrder;
-  currentView: 'home' | 'admin' | 'client' | 'login' | 'landing';
+  currentView: AppView;
   isLoggedIn: boolean;
   membershipPrices: PricingConfig;
   ptPrices: PricingConfig;

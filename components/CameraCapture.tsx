@@ -24,17 +24,16 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, currentPhoto }
 
   const startCamera = useCallback(async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      alert("Your browser does not support camera access. Please use a modern browser like Chrome or Safari.");
+      alert("Your browser does not support camera access.");
       return;
     }
 
     try {
-      // Using ideal values and aspectRatio for better mobile compatibility
       const mediaStream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           facingMode: 'user', 
-          width: { ideal: 640 },
-          height: { ideal: 640 },
+          width: { ideal: 400 }, // Reduced from 640
+          height: { ideal: 400 },
           aspectRatio: { ideal: 1 }
         },
         audio: false
@@ -44,7 +43,6 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, currentPhoto }
       
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
-        // Explicitly play for mobile browsers
         try {
           await videoRef.current.play();
         } catch (playErr) {
@@ -54,13 +52,7 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, currentPhoto }
       setIsCameraActive(true);
     } catch (err: any) {
       console.error("Error accessing camera:", err);
-      if (err.name === 'NotAllowedError') {
-        alert("Camera permission denied. Please enable camera access in your device settings and refresh.");
-      } else if (err.name === 'NotFoundError') {
-        alert("No camera found on this device.");
-      } else {
-        alert("Could not start camera. Please try uploading a photo instead.");
-      }
+      alert("Could not start camera. Please upload a photo instead.");
     }
   }, []);
 
@@ -71,20 +63,24 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, currentPhoto }
         const video = videoRef.current;
         const canvas = canvasRef.current;
         
-        // Match canvas to actual video stream dimensions
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        // Optimized capture size
+        canvas.width = 400;
+        canvas.height = 400;
         
-        // Mirror the capture if using front camera
         context.translate(canvas.width, 0);
         context.scale(-1, 1);
         
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        // Draw centered and cropped
+        const size = Math.min(video.videoWidth, video.videoHeight);
+        const xOffset = (video.videoWidth - size) / 2;
+        const yOffset = (video.videoHeight - size) / 2;
         
-        // Reset transformation for data extraction
+        context.drawImage(video, xOffset, yOffset, size, size, 0, 0, 400, 400);
+        
         context.setTransform(1, 0, 0, 1, 0, 0);
         
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        // Reduced quality to 0.6 to save massive storage space
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
         onCapture(dataUrl);
         stopCamera();
       }
@@ -98,16 +94,23 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, currentPhoto }
       reader.onload = (e) => {
         const result = e.target?.result as string;
         if (result) {
-          onCapture(result);
-          stopCamera();
+          // Downsize large uploads too
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 400;
+            canvas.height = 400;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, 400, 400);
+              onCapture(canvas.toDataURL('image/jpeg', 0.6));
+            }
+          };
+          img.src = result;
         }
       };
       reader.readAsDataURL(file);
     }
-  };
-
-  const triggerFileUpload = () => {
-    fileInputRef.current?.click();
   };
 
   useEffect(() => {
@@ -116,15 +119,9 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, currentPhoto }
 
   return (
     <div className="flex flex-col items-center space-y-4">
-      <div className="relative w-48 h-48 rounded-full overflow-hidden border-4 border-amber-500 bg-slate-800 flex items-center justify-center group shadow-xl transition-all duration-300">
+      <div className="relative w-48 h-48 rounded-full overflow-hidden border-4 border-amber-500 bg-slate-800 flex items-center justify-center group shadow-xl">
         {isCameraActive ? (
-          <video 
-            ref={videoRef} 
-            autoPlay 
-            playsInline 
-            muted
-            className="w-full h-full object-cover scale-x-[-1]"
-          />
+          <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
         ) : currentPhoto ? (
           <img src={currentPhoto} alt="Profile" className="w-full h-full object-cover" />
         ) : (
@@ -133,60 +130,30 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, currentPhoto }
             <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">Profile Photo</span>
           </div>
         )}
-        
-        {currentPhoto && !isCameraActive && (
-          <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-            <p className="text-[10px] font-black text-amber-500 uppercase tracking-tighter">Change Photo</p>
-          </div>
-        )}
       </div>
       
       <div className="flex flex-wrap justify-center gap-2">
         {!isCameraActive ? (
           <>
-            <button
-              type="button"
-              onClick={startCamera}
-              className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition flex items-center gap-2 text-xs font-bold uppercase tracking-wider"
-            >
+            <button type="button" onClick={startCamera} className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
               <CameraIcon /> {currentPhoto ? 'Retake' : 'Camera'}
             </button>
-            <button
-              type="button"
-              onClick={triggerFileUpload}
-              className="px-4 py-2 bg-slate-800 text-slate-300 border border-slate-700 rounded-lg hover:bg-slate-700 transition flex items-center gap-2 text-xs font-bold uppercase tracking-wider"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <button type="button" onClick={() => fileInputRef.current?.click()} className="px-4 py-2 bg-slate-800 text-slate-300 border border-slate-700 rounded-lg hover:bg-slate-700 transition flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
               Upload
             </button>
           </>
         ) : (
           <div className="flex gap-2">
-             <button
-              type="button"
-              onClick={capturePhoto}
-              className="px-6 py-2 bg-amber-500 text-slate-900 rounded-lg hover:bg-amber-400 transition flex items-center gap-2 text-xs font-black uppercase tracking-tighter shadow-lg shadow-amber-500/20"
-            >
-              <CheckIcon /> Capture Now
+             <button type="button" onClick={capturePhoto} className="px-6 py-2 bg-amber-500 text-slate-900 rounded-lg font-black uppercase text-xs shadow-lg">
+              Capture
             </button>
-            <button
-              type="button"
-              onClick={stopCamera}
-              className="px-4 py-2 bg-slate-800 text-slate-400 rounded-lg hover:bg-slate-700 transition text-xs font-bold uppercase tracking-wider"
-            >
+            <button type="button" onClick={stopCamera} className="px-4 py-2 bg-slate-800 text-slate-400 rounded-lg text-xs font-bold uppercase">
               Cancel
             </button>
           </div>
         )}
       </div>
-
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        className="hidden" 
-        accept="image/*" 
-        onChange={handleFileUpload}
-      />
+      <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
       <canvas ref={canvasRef} className="hidden" />
     </div>
   );

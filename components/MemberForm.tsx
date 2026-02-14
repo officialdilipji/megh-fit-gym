@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Member, MembershipTier, Gender, PaymentMethod, PricingConfig, MemberStatus, DurationMonths } from '../types';
 import CameraCapture from './CameraCapture';
 
@@ -70,8 +70,18 @@ const MemberForm: React.FC<MemberFormProps> = ({
     
     const now = new Date();
     const timestamp = now.getTime();
+    
+    // Calculate Membership Expiry
     const expiryDateObj = new Date(now);
     expiryDateObj.setMonth(now.getMonth() + formData.membershipDuration);
+
+    // Calculate PT Expiry if applicable
+    let ptExpiryStr: string | undefined = undefined;
+    if (formData.hasPersonalTraining) {
+      const ptExpiryObj = new Date(now);
+      ptExpiryObj.setMonth(now.getMonth() + formData.ptDuration);
+      ptExpiryStr = ptExpiryObj.toLocaleDateString();
+    }
 
     const initialStatus = isSelfRegistration ? MemberStatus.PENDING : MemberStatus.ACTIVE;
     const paidAmount = formData.paymentMethod === PaymentMethod.LATER ? (parseFloat(formData.amountPaidNow) || 0) : totalAmount;
@@ -97,6 +107,7 @@ const MemberForm: React.FC<MemberFormProps> = ({
       fitnessGoals: formData.goals,
       joinDate: now.toLocaleDateString(),
       expiryDate: expiryDateObj.toLocaleDateString(),
+      ptExpiryDate: ptExpiryStr,
       timestamp: timestamp,
       expiryTimestamp: expiryDateObj.getTime(),
       status: initialStatus,
@@ -198,7 +209,6 @@ const MemberForm: React.FC<MemberFormProps> = ({
                <textarea value={formData.goals} onChange={e => setFormData(p => ({ ...p, goals: e.target.value }))} className={`w-full bg-slate-950 border ${errors.goals ? 'border-red-500' : 'border-slate-800'} rounded-2xl px-5 py-4 text-white text-sm min-h-[100px] outline-none shadow-inner focus:border-amber-500 transition-all`} placeholder="e.g. Muscle gain, weight loss, athletic endurance..." />
             </div>
 
-            {/* BILLING SECTION - FORCING LIGHT MODE STYLING FOR VISIBILITY */}
             <div className="bg-white rounded-[2.5rem] p-8 md:p-10 shadow-2xl space-y-8 text-slate-900" style={{ colorScheme: 'light' }}>
                <div className="flex justify-between items-center border-b border-slate-200 pb-6">
                   <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Enrollment Total</p>
