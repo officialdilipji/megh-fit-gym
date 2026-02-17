@@ -217,21 +217,21 @@ const App: React.FC = () => {
   }, [showToast]);
 
   const handleApprove = async (member: Member) => {
-    const now = new Date();
-    const expiryDateObj = new Date(now);
-    expiryDateObj.setMonth(now.getMonth() + member.membershipDuration);
+    // Calculate activation dates based on the join date stored during registration
+    const joinDateObj = new Date(member.joinDate || Date.now());
+    const expiryDateObj = new Date(joinDateObj);
+    expiryDateObj.setMonth(joinDateObj.getMonth() + (member.membershipDuration || 1));
     
     let activatedMember: Member = { 
       ...member, 
       status: MemberStatus.ACTIVE, 
-      joinDate: now.toLocaleDateString(), 
       expiryDate: expiryDateObj.toLocaleDateString(), 
       expiryTimestamp: expiryDateObj.getTime() 
     };
 
     if (member.hasPersonalTraining && member.ptDuration) {
-      const ptExp = new Date(now);
-      ptExp.setMonth(now.getMonth() + member.ptDuration);
+      const ptExp = new Date(joinDateObj);
+      ptExp.setMonth(joinDateObj.getMonth() + member.ptDuration);
       activatedMember.ptExpiryDate = ptExp.toLocaleDateString();
     }
 
@@ -298,7 +298,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen pb-24 bg-slate-950 text-slate-200">
       {confirmDeleteId && athleteToDelete && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-slate-950/95 backdrop-blur-xl animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-slate-950/98 backdrop-blur-xl animate-in fade-in duration-300">
            <div className="w-full max-w-sm bg-slate-900 border-2 border-red-500/50 rounded-[3rem] p-10 text-center shadow-[0_0_100px_rgba(239,68,68,0.2)]">
               <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-8 text-red-500">
                  <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>

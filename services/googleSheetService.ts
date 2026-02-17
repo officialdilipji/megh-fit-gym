@@ -1,5 +1,5 @@
 
-import { Member, MemberStatus, MembershipTier, Gender, PaymentMethod, AttendanceLog, DurationMonths, PricingConfig } from '../types';
+import { Member, MemberStatus, MembershipTier, Gender, PaymentMethod, AttendanceLog, DurationMonths, PricingConfig, DEFAULT_MEMBERSHIP_PRICES, DEFAULT_PT_PRICES } from '../types';
 
 /**
  * MANDATORY: Verify this URL matches your current Apps Script deployment URL.
@@ -49,7 +49,6 @@ export const formatISTDate = (date: Date = new Date()): string => {
 
 /**
  * Normalizes time to HH:mm. 
- * Enhanced to detect ISO strings from Google Sheets and lock them back to IST.
  */
 export const normalizeTimeStr = (timeStr: any): string => {
   if (!timeStr) return '';
@@ -99,7 +98,7 @@ export const normalizeDateStr = (dateStr: string): string => {
 const getVal = (row: any, searchKeys: string[]) => {
   const rowKeys = Object.keys(row);
   for (const sk of searchKeys) {
-    const foundKey = rowKeys.find(rk => rk.toLowerCase().trim() === sk.toLowerCase().trim());
+    const foundKey = rowKeys.find(rk => rk.toLowerCase().replace(/\s/g, '_') === sk.toLowerCase().replace(/\s/g, '_'));
     if (foundKey && row[foundKey] !== undefined && row[foundKey] !== null) {
       const val = row[foundKey];
       return typeof val === 'string' ? val.trim() : val;
@@ -214,6 +213,11 @@ export const fetchMembersFromSheet = async (): Promise<Member[]> => {
     const response = await robustFetch(url);
     const data = await response.json();
     if (!Array.isArray(data)) return [];
+
+    // Load custom pricing if available from local cache for re-identification
+    const savedMembership = JSON.parse(localStorage.getItem('meghfit_membership_prices') || JSON.stringify(DEFAULT_MEMBERSHIP_PRICES));
+    const savedPT = JSON.parse(localStorage.getItem('meghfit_pt_prices') || JSON.stringify(DEFAULT_PT_PRICES));
+
     return data.map((row: any): Member => {
       const ts = parseNum(getVal(row, ["timestamp"]));
       const expTs = parseNum(getVal(row, ["expiryTimestamp"]));
@@ -222,6 +226,30 @@ export const fetchMembersFromSheet = async (): Promise<Member[]> => {
       const total = paid + due;
       const idStr = String(getVal(row, ["id"])).trim();
       
+      const hasPT = parseBool(getVal(row, ["hasPersonalTraining"]));
+      let duration = (parseNum(getVal(row, ["membershipDuration", "duration", "membership_duration", "planDuration", "Months"])) || 1) as DurationMonths;
+      let ptDuration = getVal(row, ["ptDuration"]) ? (parseNum(getVal(row, ["ptDuration"])) as DurationMonths) : undefined;
+
+      // RE-IDENTIFICATION LOGIC BASED ON PRICE (User request)
+      // This ensures that even if the 'duration' column is misread, the plan reflects the actual price paid.
+      if (duration === 1) {
+        if (hasPT) {
+          // Identify plan based on (Membership + PT) total
+          if (total === (savedMembership[3] + savedPT[3])) { duration = 3; ptDuration = 3; }
+          else if (total === (savedMembership[6] + savedPT[6])) { duration = 6; ptDuration = 6; }
+          else if (total === (savedMembership[12] + savedPT[12])) { duration = 12; ptDuration = 12; }
+          // Or if just the membership price matches a higher plan and PT is 1M
+          else if (total - savedPT[1] === savedMembership[3]) { duration = 3; ptDuration = 1; }
+          else if (total - savedPT[1] === savedMembership[6]) { duration = 6; ptDuration = 1; }
+          else if (total - savedPT[1] === savedMembership[12]) { duration = 12; ptDuration = 1; }
+        } else {
+          // Identity plan based on simple membership price match
+          if (total === savedMembership[3]) duration = 3;
+          else if (total === savedMembership[6]) duration = 6;
+          else if (total === savedMembership[12]) duration = 12;
+        }
+      }
+
       return {
         id: idStr,
         name: String(getVal(row, ["name"])),
@@ -230,10 +258,10 @@ export const fetchMembersFromSheet = async (): Promise<Member[]> => {
         phone: String(getVal(row, ["phone"])),
         email: String(getVal(row, ["email"])),
         photo: String(row["photo"] || row["Photo"] || ""), 
-        tier: (getVal(row, ["tier"]) || MembershipTier.BASIC) as MembershipTier,
-        membershipDuration: (parseNum(getVal(row, ["membershipDuration"])) || 1) as DurationMonths,
-        hasPersonalTraining: parseBool(getVal(row, ["hasPersonalTraining"])),
-        ptDuration: getVal(row, ["ptDuration"]) ? (parseNum(getVal(row, ["ptDuration"])) as DurationMonths) : undefined,
+        tier: (getVal(row, ["tier"]) || MembershipTier.STANDARD) as MembershipTier,
+        membershipDuration: duration,
+        hasPersonalTraining: hasPT,
+        ptDuration: ptDuration,
         totalPayable: total,
         amountPaid: paid,
         paymentMethod: (getVal(row, ["paymentMethod"]) || PaymentMethod.UPI) as PaymentMethod,

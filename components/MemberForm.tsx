@@ -2,6 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { Member, MembershipTier, Gender, PaymentMethod, PricingConfig, MemberStatus, DurationMonths } from '../types';
 import CameraCapture from './CameraCapture';
+import { formatISTDate } from '../services/googleSheetService';
 
 interface MemberFormProps {
   onAdd: (member: Member) => void;
@@ -28,6 +29,7 @@ const MemberForm: React.FC<MemberFormProps> = ({
     gender: Gender.MALE,
     phone: '',
     email: '',
+    admissionDate: formatISTDate(new Date()), 
     membershipDuration: 1 as DurationMonths,
     hasPersonalTraining: false,
     ptDuration: 1 as DurationMonths,
@@ -56,6 +58,7 @@ const MemberForm: React.FC<MemberFormProps> = ({
     if (!formData.name.trim()) newErrors.name = "Name is required";
     if (!/^\d{10}$/.test(formData.phone)) newErrors.phone = "Invalid phone number";
     if (!formData.goals.trim()) newErrors.goals = "Goals are required";
+    if (!formData.admissionDate) newErrors.admissionDate = "Admission date is required";
     if (isOverpaidAtEnrollment) newErrors.payment = "Payment exceeds total amount";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -68,18 +71,20 @@ const MemberForm: React.FC<MemberFormProps> = ({
     
     setIsSubmitting(true);
     
-    const now = new Date();
-    const timestamp = now.getTime();
+    // ISO Date Parts for reliable joining date processing
+    const dateParts = formData.admissionDate.split('-');
+    const joinDateObj = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
     
-    // Calculate Membership Expiry
-    const expiryDateObj = new Date(now);
-    expiryDateObj.setMonth(now.getMonth() + formData.membershipDuration);
+    const timestamp = Date.now();
+    
+    // Calculate Expiry from Join Date
+    const expiryDateObj = new Date(joinDateObj);
+    expiryDateObj.setMonth(joinDateObj.getMonth() + Number(formData.membershipDuration));
 
-    // Calculate PT Expiry if applicable
     let ptExpiryStr: string | undefined = undefined;
     if (formData.hasPersonalTraining) {
-      const ptExpiryObj = new Date(now);
-      ptExpiryObj.setMonth(now.getMonth() + formData.ptDuration);
+      const ptExpiryObj = new Date(joinDateObj);
+      ptExpiryObj.setMonth(joinDateObj.getMonth() + Number(formData.ptDuration));
       ptExpiryStr = ptExpiryObj.toLocaleDateString();
     }
 
@@ -105,7 +110,7 @@ const MemberForm: React.FC<MemberFormProps> = ({
       paymentDueDate: formData.paymentMethod === PaymentMethod.LATER ? formData.paymentDueDate : undefined,
       transactionId: formData.transactionId,
       fitnessGoals: formData.goals,
-      joinDate: now.toLocaleDateString(),
+      joinDate: joinDateObj.toLocaleDateString(), 
       expiryDate: expiryDateObj.toLocaleDateString(),
       ptExpiryDate: ptExpiryStr,
       timestamp: timestamp,
@@ -148,6 +153,16 @@ const MemberForm: React.FC<MemberFormProps> = ({
             <CameraCapture onCapture={(url) => setFormData(p => ({ ...p, photo: url }))} currentPhoto={formData.photo} />
             <div className="w-full mt-8 space-y-5 bg-slate-950/50 p-6 rounded-3xl border border-slate-800 shadow-inner">
               <div>
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Admission Date *</label>
+                <input 
+                  type="date" 
+                  value={formData.admissionDate} 
+                  onChange={e => setFormData(p => ({ ...p, admissionDate: e.target.value }))} 
+                  className={`w-full bg-slate-950 border ${errors.admissionDate ? 'border-red-500' : 'border-slate-800'} rounded-2xl px-5 py-4 text-white text-sm outline-none focus:border-amber-500 transition-all font-bold`} 
+                  style={{ colorScheme: 'dark' }} 
+                />
+              </div>
+              <div>
                 <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Primary Phone *</label>
                 <input type="tel" maxLength={10} value={formData.phone} onChange={e => setFormData(p => ({ ...p, phone: e.target.value.replace(/\D/g, '') }))} className={`w-full bg-slate-950 border ${errors.phone ? 'border-red-500' : 'border-slate-800'} rounded-2xl px-5 py-4 text-white text-sm outline-none font-mono focus:border-amber-500 transition-all`} placeholder="9876543210" />
               </div>
@@ -174,7 +189,7 @@ const MemberForm: React.FC<MemberFormProps> = ({
             </div>
 
             <div className="space-y-6">
-              <label className="block text-[11px] font-black text-white uppercase tracking-widest border-l-4 border-amber-500 pl-4">Plan Selection</label>
+              <label className="block text-[11px] font-black text-white uppercase tracking-widest border-l-4 border-amber-500 pl-4">Plan Selection (Membership)</label>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {[1, 3, 6, 12].map(m => (
                   <button key={m} type="button" onClick={() => setFormData(p => ({ ...p, membershipDuration: m as DurationMonths }))} className={`py-4 rounded-2xl border-2 transition-all flex flex-col items-center justify-center gap-1 ${formData.membershipDuration === m ? 'bg-amber-500 border-amber-400 text-slate-900 shadow-lg shadow-amber-500/10' : 'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-600'}`}>
